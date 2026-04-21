@@ -3831,7 +3831,7 @@ void main() {
         float pole = smoothstep( 0.38, 0.78, abs( n.y ) );
         vec3 whiteCap = vec3( 0.93, 0.93, 0.92 );
         diffuseColor.rgb = mix( diffuseColor.rgb, whiteCap, pole );
-      }`)},e}function gl(i){return{1:15910210,2:3107839,3:14826299,4:7024598,5:16742938,6:2062922,7:7020319,9:16765517,10:3107839,11:14826299,12:7024598,13:16742938,14:2062922,15:2236962}[i]??10066329}const or=i=>`./avatars/${i}`;class im{constructor(t,e){this.engine=e,this.root=t,t.innerHTML="",this.menu=wi("div","panel menu interactive"),this.menu.innerHTML=`
+      }`)},e}function gl(i){return{1:15910210,2:3107839,3:14826299,4:7024598,5:16742938,6:2062922,7:7020319,9:16765517,10:3107839,11:14826299,12:7024598,13:16742938,14:2062922,15:2236962}[i]??10066329}const or=i=>`/cc-vibe-c10-8ballpool/avatars/${i}`;class im{constructor(t,e){this.engine=e,this.root=t,t.innerHTML="",this.menu=wi("div","panel menu interactive"),this.menu.innerHTML=`
       <div class="title">Vertical 8 Ball</div>
       <div class="sub">Career — single player</div>
     `,this.menuCorner=wi("button","hud-menu-corner interactive"),this.menuCorner.type="button",this.menuCorner.id="btn-menu-compact",this.menuCorner.setAttribute("aria-label","Restart match"),this.menuCorner.textContent="☰",this.topStack=wi("div","hud-top-stack"),this.topStack.innerHTML=`

@@ -1,0 +1,12 @@
+GitHub Pages — iki yol (birini sec):
+
+A) GitHub Actions
+   Repo: Settings > Pages > Source: "GitHub Actions".
+   main/master push sonrasi Actions > "Deploy Pages" yesil olmali.
+
+B) Dal + /docs klasoru (kaynak kokunu yayinlama)
+   Settings > Pages > Branch: main > Folder: /docs
+   Bu repoda oyun derlenmis hali docs/ icinde; kok index.html /src/main.ts icerir, onu tek basina yayinlama.
+
+Repo GitHub adi cc-vibe-c10-8ballpool degilse, docs yeniden uret:
+   PowerShell: $env:VITE_GH_PAGES_BASE='/GERCEK-REPO-ADI/'; npm run build:docs

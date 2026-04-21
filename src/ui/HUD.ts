@@ -1,5 +1,7 @@
 import type { GameEngine, PotHudState } from '../core/GameEngine.js';
 
+const avatar = (name: 'me.svg' | 'opp.svg') => `${import.meta.env.BASE_URL}avatars/${name}`;
+
 export class HUD {
   private readonly root: HTMLElement;
   private readonly topStack: HTMLElement;
@@ -31,7 +33,7 @@ export class HUD {
           <div class="hud-avatar-col">
             <div class="avatar-frame" id="ai-avatar-frame" aria-hidden="true">
               <div class="avatar-inner">
-                <img id="ai-avatar-img" class="avatar-photo" src="/avatars/opp.svg" alt="" decoding="async" />
+                <img id="ai-avatar-img" class="avatar-photo" src="${avatar('opp.svg')}" alt="" decoding="async" />
               </div>
             </div>
             <div class="pot-under">
@@ -62,7 +64,7 @@ export class HUD {
           <div class="hud-avatar-col hud-avatar-col-end">
             <div class="avatar-frame" id="pl-avatar-frame" aria-hidden="true">
               <div class="avatar-inner">
-                <img id="pl-avatar-img" class="avatar-photo" src="/avatars/me.svg" alt="" decoding="async" />
+                <img id="pl-avatar-img" class="avatar-photo" src="${avatar('me.svg')}" alt="" decoding="async" />
               </div>
             </div>
             <div class="pot-under pot-under-end">
@@ -162,7 +164,7 @@ export class HUD {
     );
 
     const aiImg = this.topStack.querySelector('#ai-avatar-img') as HTMLImageElement;
-    aiImg.src = `/avatars/opp.svg?v=${encodeURIComponent(opp.id)}`;
+    aiImg.src = `${avatar('opp.svg')}?v=${encodeURIComponent(opp.id)}`;
     let hue = 0;
     for (let i = 0; i < opp.id.length; i++) hue = (hue + opp.id.charCodeAt(i) * 37) % 360;
     aiImg.style.filter = `hue-rotate(${hue}deg) saturate(1.08)`;

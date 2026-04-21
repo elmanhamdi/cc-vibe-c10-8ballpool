@@ -1,0 +1,68 @@
+import type { AICharacterProfile } from './types.js';
+
+/** Ordered career ladder — difficulty ramps with personality variety. */
+export const CAREER_OPPONENTS: AICharacterProfile[] = [
+  {
+    id: 'kaya',
+    name: 'Kaya',
+    tier: 'apprentice',
+    personality: 'funny',
+    accuracy: 0.35,
+    risk: 0.25,
+    pace: 1.15,
+  },
+  {
+    id: 'elif',
+    name: 'Elif',
+    tier: 'beginner',
+    personality: 'calm',
+    accuracy: 0.48,
+    risk: 0.32,
+    pace: 1.05,
+  },
+  {
+    id: 'burak',
+    name: 'Burak',
+    tier: 'intermediate',
+    personality: 'toxic',
+    accuracy: 0.58,
+    risk: 0.55,
+    pace: 0.95,
+  },
+  {
+    id: 'deniz',
+    name: 'Deniz',
+    tier: 'skilled',
+    personality: 'silent',
+    accuracy: 0.68,
+    risk: 0.45,
+    pace: 0.85,
+  },
+  {
+    id: 'arda',
+    name: 'Arda',
+    tier: 'advanced',
+    personality: 'funny',
+    accuracy: 0.76,
+    risk: 0.62,
+    pace: 0.78,
+  },
+  {
+    id: 'selin',
+    name: 'Selin',
+    tier: 'expert',
+    personality: 'calm',
+    accuracy: 0.84,
+    risk: 0.58,
+    pace: 0.7,
+  },
+  {
+    id: 'emir',
+    name: 'Emir',
+    tier: 'master',
+    personality: 'toxic',
+    accuracy: 0.92,
+    risk: 0.7,
+    pace: 0.62,
+  },
+];

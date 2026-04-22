@@ -1,7 +1,10 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { GameEngine } from '../core/GameEngine.js';
 import type { BallKind } from '../physics/Ball.js';
 import { computeAimPreview, type Segment2D } from '../gameplay/AimPreview.js';
+
+const TABLE_GLB_URL = new URL('../../assets/meshes/Table.glb', import.meta.url).href;
 
 /** Slight camera offset from nadir for depth (radians). */
 const CAMERA_ORBIT = 0.11;
@@ -31,6 +34,7 @@ export class TableScene3D {
   private readonly ballGeo: THREE.SphereGeometry;
   private readonly tableGroup = new THREE.Group();
   private readonly cueGroup = new THREE.Group();
+  private readonly physicsDebugGroup = new THREE.Group();
   private cueShaft!: THREE.Mesh;
 
   constructor(
@@ -62,7 +66,25 @@ export class TableScene3D {
     this.buildBalls();
     this.buildCueStick();
     this.buildAimLine();
+    this.buildPhysicsDebugOverlay();
+    this.physicsDebugGroup.visible = TableScene3D.readPhysicsDebugFromUrl();
+    this.scene.add(this.physicsDebugGroup);
+    window.addEventListener('keydown', this.onPhysicsDebugKey);
   }
+
+  private static readPhysicsDebugFromUrl(): boolean {
+    const q = new URLSearchParams(window.location.search);
+    return q.has('debug') || q.get('physics') === '1';
+  }
+
+  private readonly onPhysicsDebugKey = (e: KeyboardEvent): void => {
+    if (e.repeat) return;
+    if (e.key !== 'd' && e.key !== 'D') return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const el = e.target as HTMLElement | null;
+    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+    this.physicsDebugGroup.visible = !this.physicsDebugGroup.visible;
+  };
 
   private buildCueStick(): void {
     const len = 292;
@@ -98,7 +120,9 @@ export class TableScene3D {
     const y = dist * Math.cos(CAMERA_ORBIT);
     const z = dist * Math.sin(CAMERA_ORBIT);
     this.camera.position.set(0, y, z);
-    this.camera.lookAt(0, 0, 0);
+    /** Match ball plane (see `render` ball Y) so framing stays on the cloth, not under the mesh. */
+    const aimY = this.engine.physics.cue.radius + 0.15;
+    this.camera.lookAt(0, aimY, 0);
     this.camera.updateProjectionMatrix();
   }
 
@@ -132,6 +156,87 @@ export class TableScene3D {
   }
 
   private buildTable(): void {
+    this.scene.add(this.tableGroup);
+    this.addTableLoadingBackdrop();
+    const loader = new GLTFLoader();
+    loader.load(
+      TABLE_GLB_URL,
+      (gltf) => {
+        this.tableGroup.clear();
+        this.fitTableModelToPhysics(gltf.scene);
+      },
+      undefined,
+      () => {
+        console.warn('[TableScene3D] Table.glb failed to load; using procedural table.');
+        this.tableGroup.clear();
+        this.buildProceduralTable();
+      },
+    );
+  }
+
+  /** Flat placeholder until GLB finishes loading. */
+  private addTableLoadingBackdrop(): void {
+    const t = this.engine.table;
+    const plane = new THREE.Mesh(
+      new THREE.PlaneGeometry(t.width, t.height),
+      new THREE.MeshBasicMaterial({ color: 0x0a1812 }),
+    );
+    plane.rotation.x = -Math.PI / 2;
+    plane.position.y = -0.5;
+    plane.receiveShadow = true;
+    this.tableGroup.add(plane);
+  }
+
+  /**
+   * Scales the imported mesh so its XZ bounding box matches physics `table.width` × `table.height`,
+   * centers on XZ, and places the mesh **top** (max Y) on world y = 0 — same plane as `screenToTable`
+   * and slightly below ball centers (`radius + 0.15`). Blender “table lying flat” exports use a thin
+   * Y extent; aligning min-Y to 0 put the cloth far above the balls.
+   */
+  private fitTableModelToPhysics(model: THREE.Object3D): void {
+    const t = this.engine.table;
+    const tw = t.width;
+    const th = t.height;
+
+    const root = new THREE.Group();
+    root.add(model);
+
+    model.traverse((obj) => {
+      if (obj instanceof THREE.Mesh) {
+        obj.castShadow = true;
+        obj.receiveShadow = true;
+      }
+    });
+
+    root.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(root);
+    const size = box.getSize(new THREE.Vector3());
+    if (size.x < 1e-4 || size.z < 1e-4) {
+      console.warn('[TableScene3D] Table.glb has degenerate bounds; using procedural table.');
+      this.buildProceduralTable();
+      return;
+    }
+
+    const sx = tw / size.x;
+    const sz = th / size.z;
+    /** Slab models: Y is short in the file — scale Y with the shorter table edge so thickness stays believable. */
+    const horizMin = Math.min(size.x, size.z);
+    const sy =
+      size.y < 1e-5 ? Math.min(sx, sz) : Math.min(sx, sz) * (size.y / horizMin);
+    root.scale.set(sx, sy, sz);
+    root.updateMatrixWorld(true);
+
+    const box2 = new THREE.Box3().setFromObject(root);
+    root.position.set(
+      -(box2.min.x + box2.max.x) * 0.5,
+      -box2.max.y,
+      -(box2.min.z + box2.max.z) * 0.5,
+    );
+
+    this.tableGroup.add(root);
+  }
+
+  private buildProceduralTable(): void {
     const t = this.engine.table;
     const tw = t.width;
     const th = t.height;
@@ -235,8 +340,6 @@ export class TableScene3D {
     frame.receiveShadow = true;
     frame.castShadow = true;
     this.tableGroup.add(frame);
-
-    this.scene.add(this.tableGroup);
   }
 
   private buildBalls(): void {
@@ -397,6 +500,164 @@ export class TableScene3D {
     }
 
     this.renderer.render(this.scene, this.camera);
+  }
+
+  /**
+   * Draws 2D physics space in world XZ (y slightly above cloth): cushion segments, pocket radii,
+   * playable rectangle, outer table. Toggle with `D` or open with `?debug` / `?physics=1`.
+   */
+  private buildPhysicsDebugOverlay(): void {
+    const t = this.engine.table;
+    const tw = t.width;
+    const th = t.height;
+    const py = 0.12;
+    const pyMouth = 0.135;
+    const pyPot = 0.15;
+    const ballR = this.engine.physics.cue.radius;
+
+    const cushionVerts: number[] = [];
+    for (const seg of t.cushions) {
+      cushionVerts.push(
+        seg.ax - tw * 0.5,
+        py,
+        seg.ay - th * 0.5,
+        seg.bx - tw * 0.5,
+        py,
+        seg.by - th * 0.5,
+      );
+    }
+    const cushionGeom = new THREE.BufferGeometry();
+    cushionGeom.setAttribute('position', new THREE.Float32BufferAttribute(cushionVerts, 3));
+    this.physicsDebugGroup.add(
+      new THREE.LineSegments(
+        cushionGeom,
+        new THREE.LineBasicMaterial({ color: 0xff44ee, depthTest: true }),
+      ),
+    );
+
+    /** Lines between cushion endpoints = pocket throats (no rail collision). */
+    const throatVerts: number[] = [];
+    const pushW = (px: number, pz: number, y: number): void => {
+      throatVerts.push(px - tw * 0.5, y, pz - th * 0.5);
+    };
+    const innerL = t.playableMinX;
+    const innerR = t.playableMaxX;
+    const innerT = t.playableMinY;
+    const innerB = t.playableMaxY;
+    const cy = (innerT + innerB) * 0.5;
+    const ca = t.cushionCornerAlong;
+    const mh = t.cushionMidHalf;
+    const sc = t.cushionSideCorner;
+    const throatLine = (ax: number, ay: number, bx: number, by: number): void => {
+      pushW(ax, ay, pyMouth);
+      pushW(bx, by, pyMouth);
+    };
+    throatLine(innerL + ca, innerT, innerL, innerT + sc);
+    throatLine(innerR - ca, innerT, innerR, innerT + sc);
+    throatLine(innerL + ca, innerB, innerL, innerB - sc);
+    throatLine(innerR - ca, innerB, innerR, innerB - sc);
+    throatLine(innerL, cy - mh, innerL, cy + mh);
+    throatLine(innerR, cy - mh, innerR, cy + mh);
+    const throatGeom = new THREE.BufferGeometry();
+    throatGeom.setAttribute('position', new THREE.Float32BufferAttribute(throatVerts, 3));
+    this.physicsDebugGroup.add(
+      new THREE.LineSegments(
+        throatGeom,
+        new THREE.LineBasicMaterial({
+          color: 0x66ff66,
+          depthTest: true,
+          polygonOffset: true,
+          polygonOffsetFactor: -1,
+          polygonOffsetUnits: -1,
+        }),
+      ),
+    );
+
+    const pocketSegs = 40;
+    for (const pocket of t.pockets) {
+      const ring: number[] = [];
+      for (let i = 0; i <= pocketSegs; i++) {
+        const a = (i / pocketSegs) * Math.PI * 2;
+        const x = pocket.pos.x + Math.cos(a) * pocket.radius;
+        const z = pocket.pos.y + Math.sin(a) * pocket.radius;
+        ring.push(x - tw * 0.5, py, z - th * 0.5);
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(ring, 3));
+      this.physicsDebugGroup.add(
+        new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0xffaa22, depthTest: true })),
+      );
+
+      /** Matches `CollisionSystem.resolvePockets` distance test (ball center vs pocket center). */
+      const potR = Math.max(0.5, pocket.radius - ballR * 0.35);
+      const innerRing: number[] = [];
+      for (let i = 0; i <= pocketSegs; i++) {
+        const ang = (i / pocketSegs) * Math.PI * 2;
+        const x2 = pocket.pos.x + Math.cos(ang) * potR;
+        const z2 = pocket.pos.y + Math.sin(ang) * potR;
+        innerRing.push(x2 - tw * 0.5, pyPot, z2 - th * 0.5);
+      }
+      const g2 = new THREE.BufferGeometry();
+      g2.setAttribute('position', new THREE.Float32BufferAttribute(innerRing, 3));
+      this.physicsDebugGroup.add(
+        new THREE.Line(
+          g2,
+          new THREE.LineBasicMaterial({
+            color: 0x00ffcc,
+            depthTest: true,
+            polygonOffset: true,
+            polygonOffsetFactor: -2,
+            polygonOffsetUnits: -1,
+          }),
+        ),
+      );
+    }
+
+    const playLoop = new Float32Array([
+      t.playableMinX - tw * 0.5,
+      py,
+      t.playableMinY - th * 0.5,
+      t.playableMaxX - tw * 0.5,
+      py,
+      t.playableMinY - th * 0.5,
+      t.playableMaxX - tw * 0.5,
+      py,
+      t.playableMaxY - th * 0.5,
+      t.playableMinX - tw * 0.5,
+      py,
+      t.playableMaxY - th * 0.5,
+    ]);
+    const playGeom = new THREE.BufferGeometry();
+    playGeom.setAttribute('position', new THREE.BufferAttribute(playLoop, 3));
+    this.physicsDebugGroup.add(
+      new THREE.LineLoop(
+        playGeom,
+        new THREE.LineBasicMaterial({ color: 0x44ffee, depthTest: true }),
+      ),
+    );
+
+    const outerLoop = new Float32Array([
+      -tw * 0.5,
+      py,
+      -th * 0.5,
+      tw * 0.5,
+      py,
+      -th * 0.5,
+      tw * 0.5,
+      py,
+      th * 0.5,
+      -tw * 0.5,
+      py,
+      th * 0.5,
+    ]);
+    const outerGeom = new THREE.BufferGeometry();
+    outerGeom.setAttribute('position', new THREE.BufferAttribute(outerLoop, 3));
+    this.physicsDebugGroup.add(
+      new THREE.LineLoop(
+        outerGeom,
+        new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35, depthTest: true }),
+      ),
+    );
   }
 }
 

@@ -6,6 +6,23 @@ import { AssetManifest } from '../assets/AssetManifest.js';
 import { AssetIds } from '../assets/AssetIds.js';
 import type { PolylineObjectState, RenderWorldState, WorldObjectState } from '../world/renderTypes.js';
 
+/** `Table.glb` Y ölçeği — model ince kalıyorsa artır (fizik 2D, yalnızca görsel). */
+const TABLE_MESH_Y_THICKNESS_MUL = 10.0;
+
+/** Masa + toplar + çizgileri Y’de yukarı (world birimi); HUD altında daha merkezli görünür. */
+const TABLE_SCENE_Y_LIFT = 22;
+
+/**
+ * Fizikle uyumlu oyun düzlemi: top merkezi y ≈ radius + 0.15 (varsayılan radius 9 → 9.15).
+ * screen→table ışını bu yükseklikte kesilir.
+ */
+const TABLE_PLAY_SURFACE_LOCAL_Y = 9.15;
+
+/** Top / isteka / aim çizgisi Y (world); − = masaya doğru. Kalınlık sabitinden bağımsız. */
+const PLAYFIELD_RENDER_Y_OFFSET = -6;
+
+const TABLE_RAY_PLANE_W = -(TABLE_SCENE_Y_LIFT + TABLE_PLAY_SURFACE_LOCAL_Y + PLAYFIELD_RENDER_Y_OFFSET);
+
 /**
  * Maps portable `RenderWorldState` to a Three.js scene (guide §4).
  * Owns THREE.Scene, caches meshes by stable `objectId`.
@@ -15,7 +32,7 @@ export class ThreeSceneAdapter {
   private readonly camera: THREE.PerspectiveCamera;
   private readonly renderer: THREE.WebGLRenderer;
   private readonly raycaster = new THREE.Raycaster();
-  private readonly plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  private readonly plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), TABLE_RAY_PLANE_W);
   private readonly hit = new THREE.Vector3();
   private readonly ndc = new THREE.Vector2();
   private readonly objectById = new Map<string, THREE.Object3D>();
@@ -48,6 +65,7 @@ export class ThreeSceneAdapter {
     this.buildLights();
     this.buildTableFromManifest();
     this.buildCueStick();
+    this.tableGroup.position.y = TABLE_SCENE_Y_LIFT;
     this.scene.add(this.tableGroup, this.cueGroup);
   }
 
@@ -159,7 +177,7 @@ export class ThreeSceneAdapter {
 
   private applyTransform(obj: THREE.Object3D, o: WorldObjectState): void {
     const { position: p, rotation: r, scale: s } = o.transform;
-    obj.position.set(p.x, p.y, p.z);
+    obj.position.set(p.x, p.y + TABLE_SCENE_Y_LIFT + PLAYFIELD_RENDER_Y_OFFSET, p.z);
     obj.quaternion.set(r.x, r.y, r.z, r.w);
     obj.scale.set(s.x, s.y, s.z);
   }
@@ -205,7 +223,7 @@ export class ThreeSceneAdapter {
       let i = 0;
       for (const p of line.points) {
         arr[i++] = p.x;
-        arr[i++] = p.y;
+        arr[i++] = p.y + TABLE_SCENE_Y_LIFT + PLAYFIELD_RENDER_Y_OFFSET;
         arr[i++] = p.z;
       }
       attr.needsUpdate = true;
@@ -315,11 +333,13 @@ export class ThreeSceneAdapter {
     const sx = tw / size.x;
     const sz = th / size.z;
     const horizMin = Math.min(size.x, size.z);
-    const sy = size.y < 1e-5 ? Math.min(sx, sz) : Math.min(sx, sz) * (size.y / horizMin);
+    const syBase = size.y < 1e-5 ? Math.min(sx, sz) : Math.min(sx, sz) * (size.y / horizMin);
+    const sy = syBase * TABLE_MESH_Y_THICKNESS_MUL;
     root.scale.set(sx, sy, sz);
     root.updateMatrixWorld(true);
     const box2 = new THREE.Box3().setFromObject(root);
     root.position.set(-(box2.min.x + box2.max.x) * 0.5, -box2.max.y, -(box2.min.z + box2.max.z) * 0.5);
+    this.tableGroup.position.y = TABLE_SCENE_Y_LIFT;
     this.tableGroup.add(root);
   }
 
@@ -417,6 +437,7 @@ export class ThreeSceneAdapter {
     frame.receiveShadow = true;
     frame.castShadow = true;
     this.tableGroup.add(frame);
+    this.tableGroup.position.y = TABLE_SCENE_Y_LIFT;
   }
 
   private buildCueStick(): void {

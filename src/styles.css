@@ -482,6 +482,181 @@ body {
   box-sizing: border-box;
 }
 
+/* Opponent reaction: portrait above, line below; horizontal cross-in/out + opacity. */
+.opp-reaction-overlay {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: var(--hud-top-band);
+  bottom: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 16px 10px 24px;
+  pointer-events: none;
+  z-index: 3;
+  overflow: hidden;
+  background: radial-gradient(70% 55% at 50% 45%, rgba(8, 12, 20, 0.45), rgba(5, 7, 10, 0.72));
+}
+
+.opp-reaction-overlay.show {
+  display: flex;
+}
+
+.opp-reaction-stage {
+  --opp-react-dur: 5.8s;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(14px, 4vh, 22px);
+  width: 100%;
+  max-width: min(92%, 300px);
+  position: relative;
+}
+
+.opp-reaction-stage:not(.opp-react-anim) .opp-reaction-portrait-wrap,
+.opp-reaction-stage:not(.opp-react-anim) .opp-reaction-text-wrap {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.opp-reaction-portrait-wrap {
+  flex-shrink: 0;
+  width: min(38vw, 180px);
+  aspect-ratio: 3 / 4;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+  will-change: transform, opacity;
+}
+
+.opp-reaction-portrait-inner {
+  width: 100%;
+  height: 100%;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: cover;
+}
+
+.opp-reaction-portrait--placeholder {
+  background-color: #f2f4f8;
+}
+
+.opp-reaction-text-wrap {
+  flex-shrink: 0;
+  width: 100%;
+  max-width: min(100%, 280px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  will-change: transform, opacity;
+}
+
+.opp-reaction-text {
+  margin: 0;
+  font-size: clamp(12px, 3.4vw, 14px);
+  line-height: 1.4;
+  font-weight: 600;
+  color: rgba(232, 238, 247, 0.95);
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.65);
+  text-align: center;
+}
+
+/* Motion: ease-heavy middle so the pair “settles” at center before continuing. */
+@keyframes opp-react-portrait-cross {
+  0% {
+    transform: translateX(calc(-1 * (50vw + 40%)));
+    opacity: 0;
+  }
+  11% {
+    opacity: 1;
+  }
+  36% {
+    transform: translateX(-12px);
+    opacity: 1;
+  }
+  50% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  64% {
+    transform: translateX(12px);
+    opacity: 1;
+  }
+  86% {
+    opacity: 0.2;
+  }
+  100% {
+    transform: translateX(calc(50vw + 40%));
+    opacity: 0;
+  }
+}
+
+@keyframes opp-react-text-cross {
+  0% {
+    transform: translateX(calc(50vw + 40%));
+    opacity: 0;
+  }
+  11% {
+    opacity: 1;
+  }
+  36% {
+    transform: translateX(12px);
+    opacity: 1;
+  }
+  50% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  64% {
+    transform: translateX(-12px);
+    opacity: 1;
+  }
+  86% {
+    opacity: 0.2;
+  }
+  100% {
+    transform: translateX(calc(-1 * (50vw + 40%)));
+    opacity: 0;
+  }
+}
+
+.opp-reaction-stage.opp-react-anim .opp-reaction-portrait-wrap {
+  visibility: visible;
+  animation: opp-react-portrait-cross var(--opp-react-dur, 5.8s) cubic-bezier(0.34, 0.02, 0.22, 1) both;
+}
+
+.opp-reaction-stage.opp-react-anim .opp-reaction-text-wrap {
+  visibility: visible;
+  animation: opp-react-text-cross var(--opp-react-dur, 5.8s) cubic-bezier(0.34, 0.02, 0.22, 1) both;
+}
+
+@keyframes opp-react-fade-only {
+  0% {
+    opacity: 0;
+    transform: none;
+  }
+  14% {
+    opacity: 1;
+  }
+  52% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .opp-reaction-stage.opp-react-anim .opp-reaction-portrait-wrap,
+  .opp-reaction-stage.opp-react-anim .opp-reaction-text-wrap {
+    animation: opp-react-fade-only var(--opp-react-dur, 5.8s) ease both;
+  }
+}
+
 .bubble {
   position: absolute;
   top: calc(var(--hud-top-band) + 6px);
@@ -489,6 +664,7 @@ body {
   right: 12px;
   display: none;
   pointer-events: none;
+  z-index: 4;
 }
 
 .bubble.show {
@@ -577,4 +753,25 @@ body {
 .cue-spin-main .spin-dot {
   width: 13px;
   height: 13px;
+}
+
+/* F — opponent camera debug (see CameraDebugToggle) */
+.camera-debug-overlay {
+  position: absolute;
+  left: 8px;
+  bottom: 10px;
+  z-index: 20;
+  max-width: min(96%, 320px);
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.35;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: #e8eef7;
+  background: rgba(6, 10, 16, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  pointer-events: none;
+  white-space: pre-wrap;
+  text-align: left;
 }

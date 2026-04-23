@@ -12,6 +12,7 @@ import {
 } from '../gameplay/RulesEngine.js';
 import { AIController, type AIShotPlan } from '../ai/AIController.js';
 import { CAREER_OPPONENTS } from '../ai/AICharacters.js';
+import { tungReactionPortraitUrlForLine } from '../opponents/tungReactions.js';
 import type { AICharacterProfile } from '../ai/types.js';
 import { DialogueManager } from '../systems/DialogueManager.js';
 import type { DialogueCategory } from '../systems/dialogueLines.js';
@@ -27,10 +28,19 @@ import type {
 } from '../world/renderTypes.js';
 import { AssetIds } from '../assets/AssetIds.js';
 import {
+  AI_CAMERA_BLEND_EXP,
+  AI_CAMERA_CINEMATIC_CHANCE,
+  AI_CAMERA_OPPONENT_YAW_OFFSET_RAD,
+  AI_CAMERA_PRESET,
+  AI_CAMERA_PRESET_A_AZIMUTH_RAD,
+  AI_CAMERA_PRESET_A_POLAR_RAD,
+  AI_CAMERA_PRESET_B_AZIMUTH_RAD,
+  AI_CAMERA_PRESET_B_POLAR_RAD,
   CAMERA_FAR,
   CAMERA_FOV_DEG,
   CAMERA_NEAR,
-  CAMERA_ORBIT_RAD,
+  CAMERA_PLAYER_AZIMUTH_RAD,
+  CAMERA_PLAYER_POLAR_RAD,
   CAMERA_TABLE_DISTANCE_SCALE,
 } from './Constants.js';
 import { PoolInputState } from './PoolInputState.js';
@@ -75,6 +85,20 @@ export class GameEngine implements Game {
   private lastHudReason = '';
   /** Set when entering `MatchEnd`. */
   lastMatchWon: boolean | null = null;
+
+  /** 0 = player kadrajı, 1 = tam AI alternatif kadrajı; üstel yumuşatma. */
+  private aiCameraBlend = 0;
+  private aiCameraBlendTarget = 0;
+
+  /** Center “reaction portrait” moment (TTL); cleared with match / dialogue tick cadence. */
+  private opponentReaction: {
+    text: string;
+    ttl: number;
+    durationTotal: number;
+    beatId: number;
+    portraitSrc: string | null;
+  } | null = null;
+  private opponentReactionBeatSeq = 0;
 
   readonly poolInput = new PoolInputState();
   private readonly eventQueue: GameEvent[] = [];
@@ -123,6 +147,7 @@ export class GameEngine implements Game {
     this.activePlayer = 'player';
     this.turnClock.beginTurn('player');
     this.dialogue.clearBubble();
+    this.opponentReaction = null;
     this.pressureSent = false;
     this.pendingAI = null;
     this.phase = 'PlayerTurn';
@@ -130,6 +155,8 @@ export class GameEngine implements Game {
     this.lastMatchWon = null;
     this.poolInput.resetStroke();
     this.poolInput.aimDragging = false;
+    this.aiCameraBlend = 0;
+    this.aiCameraBlendTarget = 0;
   }
 
   /** After a win, advance the ladder. */
@@ -167,7 +194,7 @@ export class GameEngine implements Game {
     this.applyMenuCommands(commands);
 
     this.poolInput.applyCommands(commands, {
-      phaseIsPlayerTurn: this.phase === 'PlayerTurn',
+      phaseIsPlayerTurn: this.phase === 'PlayerTurn' && !this.opponentReaction,
       cueActive: this.physics.cue.active,
       cueX: this.physics.cue.pos.x,
       cueY: this.physics.cue.pos.y,
@@ -183,13 +210,21 @@ export class GameEngine implements Game {
     });
 
     this.dialogue.tick(dt);
+    if (this.opponentReaction) {
+      this.opponentReaction.ttl -= dt;
+      if (this.opponentReaction.ttl <= 0) this.opponentReaction = null;
+    }
+
+    if (this.phase !== 'MainMenu' && this.phase !== 'MatchEnd') {
+      this.tickAiCameraBlend(dt);
+    }
 
     if (this.phase === 'MainMenu' || this.phase === 'MatchEnd') return;
 
     if (this.phase === 'PlayerTurn') {
       const lowTime = this.turnClock.progress01() < 0.22;
       if (lowTime && !this.pressureSent) {
-        this.tryDialogue('pressure', this.getOpponent());
+        void this.tryDialogue('pressure', this.getOpponent());
         this.pressureSent = true;
       }
       if (this.turnClock.tick(dt)) {
@@ -200,8 +235,11 @@ export class GameEngine implements Game {
     }
 
     if (this.phase === 'AITurn') {
-      this.aiThink -= dt;
-      if (this.aiThink <= 0) this.fireAIShot();
+      // Hold AI shot until opponent reaction beat ends; camera blend still ticks earlier in `update`.
+      if (!this.opponentReaction) {
+        this.aiThink -= dt;
+        if (this.aiThink <= 0) this.fireAIShot();
+      }
       return;
     }
 
@@ -246,6 +284,8 @@ export class GameEngine implements Game {
       this.turnClock.stop();
       this.pendingAI = null;
       this.lastMatchWon = res.playerWon;
+      this.aiCameraBlendTarget = 0;
+      this.opponentReaction = null;
       return;
     }
 
@@ -256,6 +296,7 @@ export class GameEngine implements Game {
       this.phase = 'PlayerTurn';
       this.turnClock.beginTurn('player');
       this.pendingAI = null;
+      this.aiCameraBlendTarget = 0;
     } else {
       this.phase = 'AITurn';
       this.turnClock.stop();
@@ -270,19 +311,28 @@ export class GameEngine implements Game {
       const thinkSec = plan.thinkMs / 1000;
       this.aiThinkTotal = Math.max(0.001, thinkSec);
       this.aiThink = thinkSec;
+      this.aiCameraBlendTarget = Math.random() < AI_CAMERA_CINEMATIC_CHANCE ? 1 : 0;
     }
+  }
+
+  private tickAiCameraBlend(dt: number): void {
+    const target = this.aiCameraBlendTarget;
+    const k = AI_CAMERA_BLEND_EXP;
+    const a = 1 - Math.exp(-k * Math.max(0, dt));
+    this.aiCameraBlend += (target - this.aiCameraBlend) * a;
+    if (Math.abs(this.aiCameraBlend - target) < 0.002) this.aiCameraBlend = target;
   }
 
   private maybeTaunt(res: TurnResolution, shooter: PlayerId, shot?: ShotOutcome): void {
     const opp = this.getOpponent();
     const silentChance = opp.personality === 'silent' ? 0.55 : opp.personality === 'calm' ? 0.18 : 0.08;
 
-    if (res.foul === 'scratch' || res.foul === 'wrong_ball_first' || res.foul === 'no_ball_hit') {
-      if (shooter === 'player') this.tryDialogue('player_foul', opp, silentChance);
-      return;
-    }
-    if (res.foul === 'turn_timeout') {
-      if (shooter === 'player') this.tryDialogue('player_foul', opp, silentChance * 0.45);
+    if (res.playerWon || res.playerLost) return;
+
+    if (shooter === 'player' && res.foul !== 'none') {
+      const sc = res.foul === 'turn_timeout' ? silentChance * 0.45 : silentChance;
+      const spoken = this.tryDialogue('player_foul', opp, sc);
+      this.maybeScheduleOpponentReaction(spoken, res, shooter, shot);
       return;
     }
 
@@ -294,19 +344,68 @@ export class GameEngine implements Game {
       shot &&
       shot.potted.length === 0
     ) {
-      this.tryDialogue('player_miss', opp, silentChance);
+      const spoken = this.tryDialogue('player_miss', opp, silentChance);
+      this.maybeScheduleOpponentReaction(spoken, res, shooter, shot);
     }
 
     if (shooter === 'ai' && res.foul === 'none' && res.continueWithSamePlayer) {
-      this.tryDialogue('ai_good_shot', opp, silentChance);
+      void this.tryDialogue('ai_good_shot', opp, silentChance);
     }
   }
 
-  private tryDialogue(cat: DialogueCategory, opp: AICharacterProfile, silentChance?: number): void {
-    this.dialogue.trySpeak(cat, {
+  private countActiveTableBallsExcludingCue(): number {
+    return this.physics.balls.filter((b) => b.active && b.kind !== 'cue').length;
+  }
+
+  /**
+   * After your shot, sometimes show a center “reaction portrait” + the same taunt line.
+   * Random, only on critical beats: bad outcome or very few balls left on the table.
+   */
+  private maybeScheduleOpponentReaction(
+    spoken: string | null,
+    res: TurnResolution,
+    shooter: PlayerId,
+    shot: ShotOutcome | undefined,
+  ): void {
+    if (!spoken || shooter !== 'player') return;
+
+    const foulBad = res.foul !== 'none';
+    const dryMiss =
+      res.foul === 'none' &&
+      !res.continueWithSamePlayer &&
+      res.nextTurn === 'ai' &&
+      shot != null &&
+      shot.potted.length === 0;
+    const badShot = foulBad || dryMiss;
+    const endgameLow = this.countActiveTableBallsExcludingCue() <= 2;
+    if (!badShot && !endgameLow) return;
+
+    let p = 0.32;
+    if (badShot && endgameLow) p = 0.52;
+    else if (badShot) p = 0.36;
+    else p = 0.18;
+
+    if (Math.random() > p) return;
+    /** Reaction portrait + text on screen; AI waits until this elapses. */
+    const ttl = 4.9 + Math.random() * 2.1;
+    this.opponentReactionBeatSeq += 1;
+    const opp = this.getOpponent();
+    const portraitSrc =
+      opp.id === 'tung' ? tungReactionPortraitUrlForLine(import.meta.env.BASE_URL, spoken) : null;
+    this.opponentReaction = {
+      text: spoken,
+      ttl,
+      durationTotal: ttl,
+      beatId: this.opponentReactionBeatSeq,
+      portraitSrc,
+    };
+    this.dialogue.alignBubbleTtl(ttl);
+  }
+
+  private tryDialogue(cat: DialogueCategory, opp: AICharacterProfile, silentChance?: number): string | null {
+    return this.dialogue.trySpeak(cat, {
       personalitySilentChance: silentChance,
     });
-    void opp;
   }
 
   getSnapshot(): GameSnapshot {
@@ -435,7 +534,93 @@ export class GameEngine implements Game {
         rulesOpenTable: meta.groups.openTable,
         playerGroup: meta.groups.playerGroup,
         aiGroup: meta.groups.aiGroup,
+        opponentReaction: this.opponentReaction
+          ? {
+              text: this.opponentReaction.text,
+              portraitSrc: this.opponentReaction.portraitSrc,
+              durationSec: this.opponentReaction.durationTotal,
+              beatId: this.opponentReaction.beatId,
+            }
+          : null,
       },
+    };
+  }
+
+  /** F tuşu overlay — rakip / sinematik kamera parametreleri. */
+  getOpponentCameraDebug(viewport: ViewportSize) {
+    const c = this.computeCameraFraming(viewport);
+    const d = (r: number) => (r * 180) / Math.PI;
+    return {
+      phase: this.phase,
+      activePlayer: this.activePlayer,
+      useOpponentFraming: c.useAiShotCamera,
+      cinematicBlend: c.blend,
+      cinematicBlendTarget: this.aiCameraBlendTarget,
+      preset: AI_CAMERA_PRESET,
+      playerPolarDeg: d(CAMERA_PLAYER_POLAR_RAD),
+      playerAzimuthDeg: d(CAMERA_PLAYER_AZIMUTH_RAD),
+      aiPolarDeg: d(c.aiPolar),
+      aiAzimuthDeg: d(c.aiAzimuth),
+      finalPolarDeg: d(c.polar),
+      finalAzimuthDeg: d(c.azimuth),
+      yawMix: c.yawMix,
+      yawExtraDeg: d(c.yawExtra),
+      dist: Math.round(c.dist * 10) / 10,
+      camPos: { x: Math.round(c.camPos.x), y: Math.round(c.camPos.y), z: Math.round(c.camPos.z) },
+      aimY: Math.round(c.aimY * 100) / 100,
+    };
+  }
+
+  private computeCameraFraming(viewport: ViewportSize): {
+    dist: number;
+    aimY: number;
+    useAiShotCamera: boolean;
+    blend: number;
+    aiPolar: number;
+    aiAzimuth: number;
+    polar: number;
+    azimuth: number;
+    yawMix: number;
+    yawExtra: number;
+    camPos: ReturnType<typeof vec3>;
+  } {
+    const t = this.table;
+    const tw = t.width;
+    const th = t.height;
+    const cue = this.physics.cue;
+    const aspect = Math.max(0.2, Math.min(3, viewport.widthPx / Math.max(1, viewport.heightPx)));
+    const base = Math.max(tw, th);
+    const dist = base * (1.95 + 0.55 * (1 / aspect - 1)) * CAMERA_TABLE_DISTANCE_SCALE;
+    const aimY = cue.radius + 0.15;
+    const useAiShotCamera =
+      this.activePlayer === 'ai' && (this.phase === 'AITurn' || this.phase === 'BallSimulation');
+    const blend = useAiShotCamera ? this.aiCameraBlend : 0;
+    const aiPolar =
+      AI_CAMERA_PRESET === 'b' ? AI_CAMERA_PRESET_B_POLAR_RAD : AI_CAMERA_PRESET_A_POLAR_RAD;
+    const aiAzimuth =
+      AI_CAMERA_PRESET === 'b' ? AI_CAMERA_PRESET_B_AZIMUTH_RAD : AI_CAMERA_PRESET_A_AZIMUTH_RAD;
+    const polar =
+      CAMERA_PLAYER_POLAR_RAD + (aiPolar - CAMERA_PLAYER_POLAR_RAD) * blend;
+    const yawMix = useAiShotCamera ? 0.28 + 0.72 * blend : 0;
+    const yawExtra = AI_CAMERA_OPPONENT_YAW_OFFSET_RAD * yawMix;
+    const azimuth = lerpAngleRad(CAMERA_PLAYER_AZIMUTH_RAD, aiAzimuth, blend) + yawExtra;
+    const sp = Math.sin(polar);
+    const cp = Math.cos(polar);
+    const ca = Math.cos(azimuth);
+    const sa = Math.sin(azimuth);
+    const camPos = vec3(dist * sp * ca, dist * cp, dist * sp * sa);
+    return {
+      dist,
+      aimY,
+      useAiShotCamera,
+      blend,
+      aiPolar,
+      aiAzimuth,
+      polar,
+      azimuth,
+      yawMix,
+      yawExtra,
+      camPos,
     };
   }
 
@@ -444,15 +629,11 @@ export class GameEngine implements Game {
     const tw = t.width;
     const th = t.height;
     const cue = this.physics.cue;
-    const aspect = Math.max(0.2, Math.min(3, viewport.widthPx / Math.max(1, viewport.heightPx)));
-    const base = Math.max(tw, th);
-    const dist = base * (1.95 + 0.55 * (1 / aspect - 1)) * CAMERA_TABLE_DISTANCE_SCALE;
-    const y = dist * Math.cos(CAMERA_ORBIT_RAD);
-    const z = dist * Math.sin(CAMERA_ORBIT_RAD);
-    const aimY = cue.radius + 0.15;
+    const camFr = this.computeCameraFraming(viewport);
+    const { aimY, camPos } = camFr;
     const camera: RenderWorldState['camera'] = {
       mode: 'fixed',
-      position: vec3(0, y, z),
+      position: camPos,
       target: vec3(0, aimY, 0),
       fovDeg: CAMERA_FOV_DEG,
       near: CAMERA_NEAR,

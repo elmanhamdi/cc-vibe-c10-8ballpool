@@ -1,11 +1,20 @@
 import type { GameInputCommand } from '../core/gameContract.js';
 import type { HudState, PotHudState } from '../world/renderTypes.js';
 
-const avatar = (name: 'me.svg' | 'opp.svg') => `${import.meta.env.BASE_URL}avatars/${name}`;
+const base = () => import.meta.env.BASE_URL;
+const avatar = (name: 'me.svg' | 'opp.svg') => `${base()}avatars/${name}`;
+
+function opponentHudAvatarSrc(opponentId: string): string {
+  if (opponentId === 'tung') return `${base()}opponents/tung/hud/tung_avatar.png`;
+  return `${avatar('opp.svg')}?v=${encodeURIComponent(opponentId)}`;
+}
 
 export class HUD {
   private readonly root: HTMLElement;
   private readonly topStack: HTMLElement;
+  private readonly oppReaction: HTMLElement;
+  /** So each reaction beat restarts CSS motion from 0%. */
+  private lastOppReactionBeatId = -1;
   private readonly menuCorner: HTMLButtonElement;
   private readonly bubble: HTMLElement;
   private readonly menu: HTMLElement;
@@ -97,6 +106,19 @@ export class HUD {
       </div>
     `;
 
+    this.oppReaction = el('div', 'opp-reaction-overlay');
+    this.oppReaction.setAttribute('aria-hidden', 'true');
+    this.oppReaction.innerHTML = `
+      <div class="opp-reaction-stage">
+        <div class="opp-reaction-portrait-wrap" aria-hidden="true">
+          <div id="opp-reaction-portrait" class="opp-reaction-portrait-inner opp-reaction-portrait--placeholder"></div>
+        </div>
+        <div class="opp-reaction-text-wrap">
+          <p id="opp-reaction-text" class="opp-reaction-text"></p>
+        </div>
+      </div>
+    `;
+
     this.bubble = el('div', 'bubble');
     this.bubble.innerHTML = `<div id="bubble-text" class="bubble-text"></div>`;
 
@@ -110,7 +132,7 @@ export class HUD {
       </div>
     `;
 
-    root.append(this.menu, this.menuCorner, this.topStack, this.bubble, this.end);
+    root.append(this.menu, this.menuCorner, this.topStack, this.oppReaction, this.bubble, this.end);
     this.hudLayoutObserver = new ResizeObserver(() => this.applyHudTopBandFromLayout());
     this.hudLayoutObserver.observe(this.topStack);
     this.hideGame();
@@ -154,6 +176,9 @@ export class HUD {
       this.topStack.style.display = 'none';
       this.menuCorner.style.display = 'none';
       this.bubble.style.display = 'none';
+      this.lastOppReactionBeatId = -1;
+      this.oppReaction.querySelector('.opp-reaction-stage')?.classList.remove('opp-react-anim');
+      this.oppReaction.classList.remove('show');
       this.clearHudTopBand();
       return;
     }
@@ -165,6 +190,7 @@ export class HUD {
 
     if (!inMatch) {
       this.menuCorner.style.display = 'none';
+      this.oppReaction.classList.remove('show');
       this.clearHudTopBand();
       return;
     }
@@ -191,20 +217,58 @@ export class HUD {
     );
 
     const aiImg = this.topStack.querySelector('#ai-avatar-img') as HTMLImageElement;
-    aiImg.src = `${avatar('opp.svg')}?v=${encodeURIComponent(opp.id)}`;
-    let hue = 0;
-    for (let i = 0; i < opp.id.length; i++) hue = (hue + opp.id.charCodeAt(i) * 37) % 360;
-    aiImg.style.filter = `hue-rotate(${hue}deg) saturate(1.08)`;
+    aiImg.src = opponentHudAvatarSrc(opp.id);
+    if (opp.id === 'tung') {
+      aiImg.style.filter = '';
+    } else {
+      let hue = 0;
+      for (let i = 0; i < opp.id.length; i++) hue = (hue + opp.id.charCodeAt(i) * 37) % 360;
+      aiImg.style.filter = `hue-rotate(${hue}deg) saturate(1.08)`;
+    }
 
     this.renderPotStrip(eb.pot, eb);
 
     const bubbleText = this.bubble.querySelector('#bubble-text')!;
-    if (eb.dialogueText) {
-      bubbleText.textContent = eb.dialogueText;
-      this.bubble.classList.add('show');
-    } else {
+    const react = eb.opponentReaction;
+    if (react) {
+      this.oppReaction.classList.add('show');
+      this.oppReaction.querySelector('#opp-reaction-text')!.textContent = react.text;
+      const portrait = this.oppReaction.querySelector('#opp-reaction-portrait') as HTMLElement;
+      if (react.portraitSrc) {
+        portrait.classList.remove('opp-reaction-portrait--placeholder');
+        portrait.style.backgroundImage = `url("${react.portraitSrc}")`;
+      } else {
+        portrait.classList.add('opp-reaction-portrait--placeholder');
+        portrait.style.backgroundImage = '';
+      }
       bubbleText.textContent = '';
       this.bubble.classList.remove('show');
+
+      const stage = this.oppReaction.querySelector('.opp-reaction-stage') as HTMLElement;
+      if (react.beatId !== this.lastOppReactionBeatId) {
+        this.lastOppReactionBeatId = react.beatId;
+        this.oppReaction.style.setProperty('--opp-react-dur', `${react.durationSec}s`);
+        stage.classList.remove('opp-react-anim');
+        void stage.offsetWidth;
+        stage.classList.add('opp-react-anim');
+      }
+    } else {
+      this.lastOppReactionBeatId = -1;
+      const stage = this.oppReaction.querySelector('.opp-reaction-stage') as HTMLElement | null;
+      stage?.classList.remove('opp-react-anim');
+      const portrait = this.oppReaction.querySelector('#opp-reaction-portrait') as HTMLElement | null;
+      if (portrait) {
+        portrait.classList.add('opp-reaction-portrait--placeholder');
+        portrait.style.backgroundImage = '';
+      }
+      this.oppReaction.classList.remove('show');
+      if (eb.dialogueText) {
+        bubbleText.textContent = eb.dialogueText;
+        this.bubble.classList.add('show');
+      } else {
+        bubbleText.textContent = '';
+        this.bubble.classList.remove('show');
+      }
     }
 
     const dot = this.topStack.querySelector('#spin-dot') as HTMLElement;
@@ -285,6 +349,9 @@ export class HUD {
   private hideGame(): void {
     this.topStack.style.display = 'none';
     this.menuCorner.style.display = 'none';
+    this.lastOppReactionBeatId = -1;
+    this.oppReaction.querySelector('.opp-reaction-stage')?.classList.remove('opp-react-anim');
+    this.oppReaction.classList.remove('show');
     this.bubble.style.display = 'none';
     this.end.style.display = 'none';
     this.clearHudTopBand();

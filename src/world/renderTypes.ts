@@ -118,5 +118,15 @@ export interface HudState {
     rulesOpenTable: boolean;
     playerGroup: 'solid' | 'stripe' | null;
     aiGroup: 'solid' | 'stripe' | null;
+    /** Center reaction beat after your shot (portrait + line). */
+    opponentReaction: null | {
+      text: string;
+      /** Reaction art URL, or null for white placeholder. */
+      portraitSrc: string | null;
+      /** Matches engine TTL so CSS motion can span the whole beat. */
+      durationSec: number;
+      /** Increments each beat so the HUD can restart CSS animations. */
+      beatId: number;
+    };
   };
 }

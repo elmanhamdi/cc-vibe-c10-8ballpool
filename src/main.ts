@@ -6,15 +6,18 @@ import { BrowserHudAdapter } from './platform-browser/BrowserHudAdapter.js';
 import { BrowserAudioAdapter } from './platform-browser/BrowserAudioAdapter.js';
 import { applyCanvasResize } from './platform-browser/BrowserResize.js';
 import { PhysicsDebugToggle } from './platform-browser/PhysicsDebugToggle.js';
+import { CameraDebugToggle } from './platform-browser/CameraDebugToggle.js';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game-canvas')!;
 const hudLayer = document.querySelector<HTMLElement>('#hud-layer')!;
+const gameRoot = document.querySelector<HTMLElement>('#game-root')!;
 
 const commandBuffer: GameInputCommand[] = [];
 const engine = new GameEngine();
 const sceneAdapter = new ThreeSceneAdapter(canvas);
 const audioAdapter = new BrowserAudioAdapter();
 const physicsDebug = new PhysicsDebugToggle();
+const cameraDebug = new CameraDebugToggle(gameRoot);
 
 const hudAdapter = new BrowserHudAdapter(hudLayer, engine, (c) => {
   commandBuffer.push(c);
@@ -89,6 +92,18 @@ const loop = (now: number) => {
   );
   sceneAdapter.render(rw, dt);
   hudAdapter.sync();
+  if (cameraDebug.get()) {
+    const d = engine.getOpponentCameraDebug({ widthPx: canvas.width, heightPx: canvas.height });
+    if (d.useOpponentFraming) {
+      cameraDebug.setLines([
+        'Rakip vuruşu — kamera (F kapat)',
+        `polar ${d.finalPolarDeg.toFixed(1)}°`,
+        `azimuth ${d.finalAzimuthDeg.toFixed(1)}°`,
+      ]);
+    } else {
+      cameraDebug.setLines(['F açık — rakip sırasında polar/azimuth gösterilir']);
+    }
+  }
   audioAdapter.consume(engine.drainEvents());
   requestAnimationFrame(loop);
 };

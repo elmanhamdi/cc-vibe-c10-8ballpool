@@ -57,6 +57,11 @@ export class DialogueManager {
   clearBubble(): void {
     this.current = null;
   }
+
+  /** When the same line is shown in a full-screen reaction, end the bubble together with that beat. */
+  alignBubbleTtl(seconds: number): void {
+    if (this.current) this.current.ttl = seconds;
+  }
 }
 
 function pickWeighted(lines: WeightedLine[]): WeightedLine | null {

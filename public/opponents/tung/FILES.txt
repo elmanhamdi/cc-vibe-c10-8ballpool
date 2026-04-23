@@ -1,0 +1,4 @@
+Tung asset folders (URLs use Vite BASE_URL, e.g. /opponents/tung/hud/...)
+
+hud/       — Üst bar rakip avatarı (ör. avatar.webp veya avatar.png)
+reactions/ — Orta ekran reaksiyon ifadeleri (ör. smirk.png, surprised.png)

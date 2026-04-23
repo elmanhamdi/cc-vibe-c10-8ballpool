@@ -1,4 +1,5 @@
-import type { GameEngine, PotHudState } from '../core/GameEngine.js';
+import type { GameInputCommand } from '../core/gameContract.js';
+import type { HudState, PotHudState } from '../world/renderTypes.js';
 
 const avatar = (name: 'me.svg' | 'opp.svg') => `${import.meta.env.BASE_URL}avatars/${name}`;
 
@@ -9,9 +10,16 @@ export class HUD {
   private readonly bubble: HTMLElement;
   private readonly menu: HTMLElement;
   private readonly end: HTMLElement;
+  private readonly gameRoot: HTMLElement | null;
+  private readonly hudLayoutObserver: ResizeObserver;
 
-  constructor(root: HTMLElement, private readonly engine: GameEngine) {
+  constructor(
+    root: HTMLElement,
+    private readonly getHud: () => HudState,
+    private readonly pushCommand: (c: GameInputCommand) => void,
+  ) {
     this.root = root;
+    this.gameRoot = root.parentElement?.id === 'game-root' ? root.parentElement : null;
     root.innerHTML = '';
 
     this.menu = el('div', 'panel menu interactive');
@@ -29,46 +37,59 @@ export class HUD {
     this.topStack = el('div', 'hud-top-stack');
     this.topStack.innerHTML = `
       <div class="hud-top">
-        <div class="hud-side hud-side-ai">
-          <div class="hud-avatar-col">
-            <div class="avatar-frame" id="ai-avatar-frame" aria-hidden="true">
-              <div class="avatar-inner">
-                <img id="ai-avatar-img" class="avatar-photo" src="${avatar('opp.svg')}" alt="" decoding="async" />
+        <div class="hud-top-main">
+          <div class="hud-side hud-side-ai">
+            <div class="hud-ident-block">
+              <div class="hud-ident-row">
+                <div class="avatar-frame" id="ai-avatar-frame" aria-hidden="true">
+                  <div class="avatar-inner">
+                    <img id="ai-avatar-img" class="avatar-photo" src="${avatar('opp.svg')}" alt="" decoding="async" />
+                  </div>
+                </div>
+                <div class="hud-side-text hud-ident-text">
+                  <div class="side-line">
+                    <span id="opp-name" class="side-name">—</span>
+                    <span id="opp-lvl" class="lvl-star lvl-star-ai" aria-label="Opponent level">1</span>
+                  </div>
+                  <div id="opp-tier" class="side-meta">—</div>
+                </div>
               </div>
             </div>
+          </div>
+          <div class="hud-center-col">
+            <div class="spin interactive spin-top spin-center" id="spin-pad" aria-label="Spin picker">
+              <div class="cue-mini cue-spin-main"><div id="spin-dot" class="spin-dot"></div></div>
+            </div>
+          </div>
+          <div class="hud-side hud-side-player">
+            <div class="hud-ident-block hud-ident-block--end">
+              <div class="hud-ident-row">
+                <div class="hud-side-text hud-side-text-right hud-ident-text">
+                  <div class="side-line side-line-end">
+                    <span id="pl-name" class="side-name">You</span>
+                    <span id="pl-lvl" class="lvl-star" aria-label="Level">1</span>
+                  </div>
+                </div>
+                <div class="avatar-frame" id="pl-avatar-frame" aria-hidden="true">
+                  <div class="avatar-inner">
+                    <img id="pl-avatar-img" class="avatar-photo" src="${avatar('me.svg')}" alt="" decoding="async" />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="hud-top-pots" id="hud-top-pots">
+          <div class="hud-pot-wrap hud-pot-wrap--ai">
             <div class="pot-under">
-              <div class="pot-label" id="pot-label-left">Opp</div>
+              <div class="pot-label" id="pot-label-left">—</div>
               <div id="pot-chips-left" class="pot-chips"></div>
             </div>
           </div>
-          <div class="hud-side-text">
-            <div class="side-line">
-              <span id="opp-name" class="side-name">—</span>
-              <span id="opp-lvl" class="lvl-star lvl-star-ai" aria-label="Opponent level">1</span>
-            </div>
-            <div id="opp-tier" class="side-meta">—</div>
-          </div>
-        </div>
-        <div class="hud-center-col">
-          <div class="spin interactive spin-top spin-center" id="spin-pad" aria-label="Spin picker">
-            <div class="cue-mini cue-spin-main"><div id="spin-dot" class="spin-dot"></div></div>
-          </div>
-        </div>
-        <div class="hud-side hud-side-player">
-          <div class="hud-side-text hud-side-text-right">
-            <div class="side-line side-line-end">
-              <span id="pl-name" class="side-name">You</span>
-              <span id="pl-lvl" class="lvl-star" aria-label="Level">1</span>
-            </div>
-          </div>
-          <div class="hud-avatar-col hud-avatar-col-end">
-            <div class="avatar-frame" id="pl-avatar-frame" aria-hidden="true">
-              <div class="avatar-inner">
-                <img id="pl-avatar-img" class="avatar-photo" src="${avatar('me.svg')}" alt="" decoding="async" />
-              </div>
-            </div>
+          <div class="hud-pot-wrap hud-pot-wrap--spacer" aria-hidden="true"></div>
+          <div class="hud-pot-wrap hud-pot-wrap--pl">
             <div class="pot-under pot-under-end">
-              <div class="pot-label pot-label-end" id="pot-label-right">You</div>
+              <div class="pot-label pot-label-end" id="pot-label-right">—</div>
               <div id="pot-chips-right" class="pot-chips pot-chips-end"></div>
             </div>
           </div>
@@ -90,18 +111,15 @@ export class HUD {
     `;
 
     root.append(this.menu, this.menuCorner, this.topStack, this.bubble, this.end);
+    this.hudLayoutObserver = new ResizeObserver(() => this.applyHudTopBandFromLayout());
+    this.hudLayoutObserver.observe(this.topStack);
     this.hideGame();
   }
 
-  bindHandlers(handlers: {
-    onMenu: () => void;
-    onNext: () => void;
-    onHome: () => void;
-    onSpinTap: (nx: number, ny: number) => void;
-  }): void {
-    this.menuCorner.addEventListener('click', handlers.onMenu);
-    this.end.querySelector('#btn-next')!.addEventListener('click', handlers.onNext);
-    this.end.querySelector('#btn-home')!.addEventListener('click', handlers.onHome);
+  bindHandlers(): void {
+    this.menuCorner.addEventListener('click', () => this.pushCommand({ type: 'menu.restart' }));
+    this.end.querySelector('#btn-next')!.addEventListener('click', () => this.pushCommand({ type: 'menu.next' }));
+    this.end.querySelector('#btn-home')!.addEventListener('click', () => this.pushCommand({ type: 'menu.home' }));
 
     const spin = this.topStack.querySelector('#spin-pad') as HTMLElement;
     spin.addEventListener('pointerdown', (e: Event) => {
@@ -109,44 +127,53 @@ export class HUD {
       const r = spin.getBoundingClientRect();
       const nx = ((pe.clientX - r.left) / r.width) * 2 - 1;
       const ny = ((pe.clientY - r.top) / r.height) * 2 - 1;
-      handlers.onSpinTap(clamp(nx), clamp(ny));
+      this.pushCommand({ type: 'spin.set', nx: clamp(nx), ny: clamp(ny) });
     });
   }
 
-  sync(): void {
-    const snap = this.engine.getSnapshot();
-    const meta = this.engine.getHudMeta();
-    const opp = meta.opponent;
-    const phase = snap.phase;
+  syncFromState(): void {
+    const h = this.getHud();
+    const eb = h.eightBall;
+    if (!eb) return;
+
+    const phase = eb.phase;
+    const opp = {
+      id: eb.opponentId,
+      name: eb.opponentName,
+      tier: eb.opponentTier,
+      accuracy: eb.opponentAccuracy,
+    };
 
     this.menu.style.display = phase === 'MainMenu' ? 'flex' : 'none';
     this.end.style.display = phase === 'MatchEnd' ? 'flex' : 'none';
 
     if (phase === 'MatchEnd') {
-      if (this.engine.lastMatchWon !== null) {
-        this.syncEndOverlay(this.engine.lastMatchWon === true);
+      if (eb.lastMatchWon !== null) {
+        this.syncEndOverlay(eb.lastMatchWon === true, eb.reason);
       }
       this.topStack.style.display = 'none';
       this.menuCorner.style.display = 'none';
       this.bubble.style.display = 'none';
+      this.clearHudTopBand();
       return;
     }
 
     const inMatch = phase !== 'MainMenu';
-    this.topStack.style.display = inMatch ? 'block' : 'none';
+    this.topStack.style.display = inMatch ? 'flex' : 'none';
     this.menuCorner.style.display = inMatch ? 'block' : 'none';
     this.bubble.style.display = inMatch ? 'block' : 'none';
 
     if (!inMatch) {
       this.menuCorner.style.display = 'none';
+      this.clearHudTopBand();
       return;
     }
 
-    const t = snap.turnTime01;
+    const t = eb.turnTime01;
     const plFrame = this.topStack.querySelector('#pl-avatar-frame') as HTMLElement;
     const aiFrame = this.topStack.querySelector('#ai-avatar-frame') as HTMLElement;
-    const playerRingOn = snap.phase === 'PlayerTurn' && snap.activePlayer === 'player';
-    const aiRingOn = snap.phase === 'AITurn';
+    const playerRingOn = eb.phase === 'PlayerTurn' && eb.activePlayer === 'player';
+    const aiRingOn = eb.phase === 'AITurn';
     plFrame.style.setProperty('--p', String(t));
     aiFrame.style.setProperty('--p', String(t));
     plFrame.classList.toggle('avatar-active', playerRingOn);
@@ -155,12 +182,12 @@ export class HUD {
     aiFrame.classList.toggle('hot', aiRingOn && t < 0.22);
 
     this.topStack.querySelector('#pl-name')!.textContent = 'You';
-    this.topStack.querySelector('#pl-lvl')!.textContent = String(snap.levelIndex + 1);
+    this.topStack.querySelector('#pl-lvl')!.textContent = String(eb.levelIndex + 1);
 
     this.topStack.querySelector('#opp-name')!.textContent = opp.name;
     this.topStack.querySelector('#opp-tier')!.textContent = opp.tier.toUpperCase();
     this.topStack.querySelector('#opp-lvl')!.textContent = String(
-      Math.min(99, snap.levelIndex + 3 + Math.floor(opp.accuracy * 40)),
+      Math.min(99, eb.levelIndex + 3 + Math.floor(opp.accuracy * 40)),
     );
 
     const aiImg = this.topStack.querySelector('#ai-avatar-img') as HTMLImageElement;
@@ -169,12 +196,11 @@ export class HUD {
     for (let i = 0; i < opp.id.length; i++) hue = (hue + opp.id.charCodeAt(i) * 37) % 360;
     aiImg.style.filter = `hue-rotate(${hue}deg) saturate(1.08)`;
 
-    const pot = this.engine.getPotHudState();
-    this.renderPotStrip(pot);
+    this.renderPotStrip(eb.pot, eb);
 
     const bubbleText = this.bubble.querySelector('#bubble-text')!;
-    if (snap.dialogue) {
-      bubbleText.textContent = snap.dialogue.text;
+    if (eb.dialogueText) {
+      bubbleText.textContent = eb.dialogueText;
       this.bubble.classList.add('show');
     } else {
       bubbleText.textContent = '';
@@ -182,52 +208,77 @@ export class HUD {
     }
 
     const dot = this.topStack.querySelector('#spin-dot') as HTMLElement;
-    dot.style.left = `${50 + this.engine.spinX * 38}%`;
-    dot.style.top = `${50 + this.engine.spinY * 38}%`;
+    dot.style.left = `${50 + eb.spinX * 38}%`;
+    dot.style.top = `${50 + eb.spinY * 38}%`;
+
+    requestAnimationFrame(() => this.applyHudTopBandFromLayout());
   }
 
-  private renderPotStrip(pot: PotHudState): void {
+  /** Keep canvas `margin-top` equal to actual HUD height so #game-root does not show as a black strip. */
+  private applyHudTopBandFromLayout(): void {
+    const gr = this.gameRoot;
+    if (!gr) return;
+    if (this.topStack.style.display === 'none' || getComputedStyle(this.topStack).display === 'none') {
+      this.clearHudTopBand();
+      return;
+    }
+    const h = this.topStack.getBoundingClientRect().height;
+    if (h < 4) return;
+    gr.style.setProperty('--hud-top-band', `${Math.ceil(h)}px`);
+  }
+
+  private clearHudTopBand(): void {
+    this.gameRoot?.style.removeProperty('--hud-top-band');
+  }
+
+  private renderPotStrip(
+    pot: PotHudState,
+    ctx: NonNullable<HudState['eightBall']>,
+  ): void {
     const chipsL = this.topStack.querySelector('#pot-chips-left')!;
     const chipsR = this.topStack.querySelector('#pot-chips-right')!;
     const lblL = this.topStack.querySelector('#pot-label-left')!;
     const lblR = this.topStack.querySelector('#pot-label-right')!;
-    const ctx = this.engine.rulesCtx;
     const potUnders = this.topStack.querySelectorAll('.pot-under');
 
-    if (pot.kind === 'open') {
-      for (const el of potUnders) (el as HTMLElement).style.display = 'none';
-      lblL.textContent = '';
-      lblR.textContent = '';
-      chipsL.innerHTML = '';
-      chipsR.innerHTML = '';
+    for (const el of potUnders) {
+      (el as HTMLElement).style.display = '';
+    }
+
+    lblL.textContent = ctx.potTargetLabelOpponent;
+    lblR.textContent = ctx.potTargetLabelPlayer;
+
+    if (!ctx.showPotProgressStrip) {
+      const eightRow = ctx.eightPocketed ? chipHtml(8) : eightDueHtml();
+      chipsL.innerHTML = eightRow;
+      chipsR.innerHTML = eightRow;
       return;
     }
 
-    for (const el of potUnders) (el as HTMLElement).style.display = '';
+    if (pot.kind === 'open') {
+      chipsL.innerHTML = stripOrdered(SOLID_NUMBERS, pot.solids);
+      chipsR.innerHTML = stripOrdered(STRIPE_NUMBERS, pot.stripes);
+      return;
+    }
+
     const pg = ctx.playerGroup;
     const ag = ctx.aiGroup;
     if (pg && ag) {
-      const youG = pg === 'solid' ? 'Solids' : 'Stripes';
-      const oppG = ag === 'solid' ? 'Solids' : 'Stripes';
-      lblL.textContent = `Opp · ${oppG}`;
-      lblR.textContent = `You · ${youG}`;
       const playerOrder = pg === 'solid' ? SOLID_NUMBERS : STRIPE_NUMBERS;
       const aiOrder = ag === 'solid' ? SOLID_NUMBERS : STRIPE_NUMBERS;
       chipsL.innerHTML = stripOrdered(aiOrder, pot.ai);
       chipsR.innerHTML = stripOrdered(playerOrder, pot.player);
     } else {
-      lblL.textContent = 'Opp';
-      lblR.textContent = 'You';
       chipsL.innerHTML = pot.ai.map((n) => chipHtml(n)).join('');
       chipsR.innerHTML = pot.player.map((n) => chipHtml(n)).join('');
     }
   }
 
-  private syncEndOverlay(won: boolean): void {
+  private syncEndOverlay(won: boolean, reason: string): void {
     const title = this.end.querySelector('#end-title')!;
     const sub = this.end.querySelector('#end-sub')!;
     title.textContent = won ? 'You won' : 'You lost';
-    sub.textContent = this.engine.getHudMeta().reason;
+    sub.textContent = reason;
     (this.end.querySelector('#btn-next') as HTMLElement).style.display = won ? 'inline-flex' : 'none';
   }
 
@@ -236,25 +287,12 @@ export class HUD {
     this.menuCorner.style.display = 'none';
     this.bubble.style.display = 'none';
     this.end.style.display = 'none';
+    this.clearHudTopBand();
   }
 }
 
 const SOLID_NUMBERS = [1, 2, 3, 4, 5, 6, 7] as const;
 const STRIPE_NUMBERS = [9, 10, 11, 12, 13, 14, 15] as const;
-
-function stripOrdered(order: readonly number[], potted: number[]): string {
-  const set = new Set(potted);
-  return order.map((n) => (set.has(n) ? chipHtml(n) : slotHtml())).join('');
-}
-
-function slotHtml(): string {
-  return '<span class="pot-slot" aria-hidden="true"></span>';
-}
-
-function chipHtml(n: number): string {
-  const bg = chipColor(n);
-  return `<span class="pot-chip" style="background:${bg}">${n}</span>`;
-}
 
 function chipColor(n: number): string {
   const m: Record<number, string> = {
@@ -265,6 +303,7 @@ function chipColor(n: number): string {
     5: '#ff7a1a',
     6: '#1f7a4a',
     7: '#6b1f1f',
+    8: '#141414',
     9: '#ffd24d',
     10: '#2f6bff',
     11: '#e23b3b',
@@ -274,6 +313,25 @@ function chipColor(n: number): string {
     15: '#333',
   };
   return m[n] ?? '#888';
+}
+
+function stripOrdered(order: readonly number[], potted: number[]): string {
+  const set = new Set(potted);
+  return order.map((n) => (set.has(n) ? chipHtml(n) : slotHtml())).join('');
+}
+
+/** 8-ball still on table — show target digit before group strip appears. */
+function eightDueHtml(): string {
+  return '<span class="pot-eight-due" aria-hidden="true">8</span>';
+}
+
+function slotHtml(): string {
+  return '<span class="pot-slot" aria-hidden="true"></span>';
+}
+
+function chipHtml(n: number): string {
+  const bg = chipColor(n);
+  return `<span class="pot-chip" style="background:${bg}">${n}</span>`;
 }
 
 function el(tag: string, cls: string): HTMLElement {

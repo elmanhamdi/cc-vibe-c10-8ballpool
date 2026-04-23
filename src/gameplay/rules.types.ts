@@ -209,8 +209,13 @@ function assignIfNeeded(
   const first = balls.find((b) => b.id === shot.firstHitId);
   if (!first || first.kind === 'cue') return null;
 
-  const pottedGroupBall = pottedMeta.find((b) => b.kind === 'solid' || b.kind === 'stripe');
-  if (!pottedGroupBall) return null;
+  /** If both solids and stripes pocket on one shot, lowest-numbered object ball picks the group (WPA-style). */
+  const groupBalls = pottedMeta.filter((b) => b.kind === 'solid' || b.kind === 'stripe');
+  if (!groupBalls.length) return null;
+  let pottedGroupBall = groupBalls[0]!;
+  for (const b of groupBalls) {
+    if (b.number < pottedGroupBall.number) pottedGroupBall = b;
+  }
 
   const group = kindToGroup(pottedGroupBall.kind);
   if (!group) return null;

@@ -1,7 +1,11 @@
 /**
  * Drag on empty table = aim (angle).
  * Press behind the cue ball on the “cue line”, pull back for power; release to shoot.
+ *
+ * @deprecated Prefer `PoolInputState` + `GameInputCommand` via `Game.update`.
  */
+
+export { isOnCuePullZone } from '../core/cuePullZone.js';
 
 const MIN_SHOT_POWER = 0.14;
 const MAX_PULL_SENS = 0.0052;
@@ -56,26 +60,4 @@ export class CueStrokeController {
     this.reset();
     return { shouldShoot: false, aim: 0, power: 0 };
   }
-}
-
-/** Cue-pull zone: thin strip behind the cue ball opposite shot direction. */
-export function isOnCuePullZone(
-  tableX: number,
-  tableY: number,
-  cueX: number,
-  cueY: number,
-  aimAngle: number,
-  ballRadius: number,
-): boolean {
-  const ax = Math.cos(aimAngle);
-  const ay = Math.sin(aimAngle);
-  const vx = tableX - cueX;
-  const vy = tableY - cueY;
-  const forward = vx * ax + vy * ay;
-  if (forward > ballRadius * 0.75) return false;
-  const back = -forward;
-  const lateral = Math.abs(vx * -ay + vy * ax);
-  const maxBack = 320;
-  const latMax = 26;
-  return back >= -ballRadius * 0.35 && back <= maxBack && lateral < latMax;
 }

@@ -1,23 +1,25 @@
 import type { GamePhase } from './types.js';
-import type { GameEvent } from './events.js';
 
-export type Transition<Ctx> = {
+/** Minimal event shape for the unused `StateMachine` helper. */
+export type PhaseDispatchEvent = { type: string };
+
+export type Transition<Ctx, E extends PhaseDispatchEvent = PhaseDispatchEvent> = {
   from: GamePhase | '*';
-  event: GameEvent['type'];
-  guard?: (ctx: Ctx, e: GameEvent) => boolean;
-  to: GamePhase | ((ctx: Ctx, e: GameEvent) => GamePhase);
-  action?: (ctx: Ctx, e: GameEvent) => void;
+  event: E['type'];
+  guard?: (ctx: Ctx, e: E) => boolean;
+  to: GamePhase | ((ctx: Ctx, e: E) => GamePhase);
+  action?: (ctx: Ctx, e: E) => void;
 };
 
 /**
  * Small explicit state machine — transitions are data-driven for readability.
  * TODO: persist transition table externally if the flow grows further.
  */
-export class StateMachine<Ctx> {
+export class StateMachine<Ctx, E extends PhaseDispatchEvent = PhaseDispatchEvent> {
   private phase: GamePhase;
-  private readonly transitions: Transition<Ctx>[];
+  private readonly transitions: Transition<Ctx, E>[];
 
-  constructor(initial: GamePhase, transitions: Transition<Ctx>[]) {
+  constructor(initial: GamePhase, transitions: Transition<Ctx, E>[]) {
     this.phase = initial;
     this.transitions = transitions;
   }
@@ -26,7 +28,7 @@ export class StateMachine<Ctx> {
     return this.phase;
   }
 
-  dispatch(ctx: Ctx, event: GameEvent): GamePhase {
+  dispatch(ctx: Ctx, event: E): GamePhase {
     for (const t of this.transitions) {
       if (t.event !== event.type) continue;
       if (t.from !== '*' && t.from !== this.phase) continue;

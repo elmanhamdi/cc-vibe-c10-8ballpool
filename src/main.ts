@@ -1,25 +1,30 @@
 import './styles.css';
 import { GameEngine } from './core/GameEngine.js';
-import { TableScene3D } from './ui/TableScene3D.js';
-import { HUD } from './ui/HUD.js';
-import { AimController } from './input/AimController.js';
-import { CueStrokeController, isOnCuePullZone } from './input/CueStrokeController.js';
+import type { GameInputCommand } from './core/gameContract.js';
+import { ThreeSceneAdapter } from './render-three/ThreeSceneAdapter.js';
+import { BrowserHudAdapter } from './platform-browser/BrowserHudAdapter.js';
+import { BrowserAudioAdapter } from './platform-browser/BrowserAudioAdapter.js';
+import { applyCanvasResize } from './platform-browser/BrowserResize.js';
+import { PhysicsDebugToggle } from './platform-browser/PhysicsDebugToggle.js';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game-canvas')!;
 const hudLayer = document.querySelector<HTMLElement>('#hud-layer')!;
 
+const commandBuffer: GameInputCommand[] = [];
 const engine = new GameEngine();
-const aim = new AimController();
-const stroke = new CueStrokeController();
-const renderer = new TableScene3D(canvas, engine);
-const hud = new HUD(hudLayer, engine);
+const sceneAdapter = new ThreeSceneAdapter(canvas);
+const audioAdapter = new BrowserAudioAdapter();
+const physicsDebug = new PhysicsDebugToggle();
+
+const hudAdapter = new BrowserHudAdapter(hudLayer, engine, (c) => {
+  commandBuffer.push(c);
+});
+hudAdapter.bind();
 
 function resize(): void {
   const rect = canvas.getBoundingClientRect();
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  canvas.width = Math.max(2, Math.floor(rect.width * dpr));
-  canvas.height = Math.max(2, Math.floor(rect.height * dpr));
-  renderer.resize(canvas.width, canvas.height);
+  applyCanvasResize(canvas, rect.width, rect.height);
+  sceneAdapter.resize(canvas.width, canvas.height);
 }
 
 resize();
@@ -32,27 +37,27 @@ function canvasPoint(e: PointerEvent): { sx: number; sy: number } {
   return { sx, sy };
 }
 
+function pushPointer(phase: 'down' | 'move' | 'up' | 'cancel', sx: number, sy: number): void {
+  const hints = { physicsDebugVisible: physicsDebug.get() };
+  const rw = engine.getRenderWorldState(
+    { widthPx: canvas.width, heightPx: canvas.height },
+    hints,
+  );
+  const p = sceneAdapter.screenToTable(sx, sy, rw);
+  commandBuffer.push({ type: 'pointer.table', phase, tableX: p.x, tableY: p.y });
+}
+
 canvas.addEventListener('pointerdown', (e) => {
   if (engine.phase !== 'PlayerTurn') return;
   const { sx, sy } = canvasPoint(e);
-  const p = renderer.screenToTable(sx, sy);
-  const cue = engine.physics.cue;
-  if (!cue.active) return;
-  const onCue = isOnCuePullZone(p.x, p.y, cue.pos.x, cue.pos.y, aim.angle, cue.radius);
-  stroke.beginStroke(p.x, p.y, onCue, cue.pos.x, cue.pos.y, aim.angle);
-  if (!onCue) aim.onPointerDown();
+  pushPointer('down', sx, sy);
   canvas.setPointerCapture(e.pointerId);
 });
 
 canvas.addEventListener('pointerup', (e) => {
-  aim.onPointerUp();
   if (engine.phase === 'PlayerTurn') {
-    const r = stroke.endStroke();
-    if (r.shouldShoot) {
-      engine.requestPlayerShot(r.aim, r.power, engine.spinX, engine.spinY);
-    }
-  } else {
-    stroke.reset();
+    const { sx, sy } = canvasPoint(e);
+    pushPointer('up', sx, sy);
   }
   try {
     canvas.releasePointerCapture(e.pointerId);
@@ -62,51 +67,29 @@ canvas.addEventListener('pointerup', (e) => {
 });
 
 canvas.addEventListener('pointercancel', () => {
-  aim.onPointerUp();
-  stroke.reset();
+  commandBuffer.push({ type: 'pointer.table', phase: 'cancel', tableX: 0, tableY: 0 });
 });
 
 canvas.addEventListener('pointermove', (e) => {
   if (engine.phase !== 'PlayerTurn') return;
   const { sx, sy } = canvasPoint(e);
-  const p = renderer.screenToTable(sx, sy);
-  const cue = engine.physics.cue;
-  if (stroke.mode === 'charge') {
-    stroke.moveStroke(p.x, p.y);
-  } else {
-    aim.updateFromPointer(cue.pos.x, cue.pos.y, p.x, p.y, aim.dragging);
-  }
-});
-
-hud.bindHandlers({
-  onMenu: () => {
-    stroke.reset();
-    engine.beginCareer(engine.levelIndex);
-  },
-  onNext: () => {
-    stroke.reset();
-    engine.bumpLevelAfterVictory();
-    engine.beginCareer(engine.levelIndex);
-  },
-  onHome: () => {
-    stroke.reset();
-    engine.beginCareer(engine.levelIndex);
-  },
-  onSpinTap: (nx, ny) => {
-    engine.spinX = nx;
-    engine.spinY = ny;
-  },
+  pushPointer('move', sx, sy);
 });
 
 let last = performance.now();
 const loop = (now: number) => {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
-  engine.update(dt);
-  const aimVis = stroke.mode === 'charge' ? stroke.aimLocked : aim.angle;
-  const pullVis = stroke.mode === 'charge' ? stroke.charge01 : 0;
-  renderer.render(aimVis, { chargePull: pullVis });
-  hud.sync();
+  const cmds = commandBuffer.splice(0, commandBuffer.length);
+  engine.update(dt, cmds);
+  const hints = { physicsDebugVisible: physicsDebug.get() };
+  const rw = engine.getRenderWorldState(
+    { widthPx: canvas.width, heightPx: canvas.height },
+    hints,
+  );
+  sceneAdapter.render(rw, dt);
+  hudAdapter.sync();
+  audioAdapter.consume(engine.drainEvents());
   requestAnimationFrame(loop);
 };
 requestAnimationFrame(loop);

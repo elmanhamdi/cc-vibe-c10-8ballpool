@@ -29,6 +29,7 @@ import type {
 import { AssetIds } from '../assets/AssetIds.js';
 import {
   AI_CAMERA_BLEND_EXP,
+  AI_CAMERA_BLEND_EXP_RETURN,
   AI_CAMERA_CINEMATIC_CHANCE,
   AI_CAMERA_OPPONENT_YAW_OFFSET_RAD,
   AI_CAMERA_PRESET,
@@ -317,7 +318,7 @@ export class GameEngine implements Game {
 
   private tickAiCameraBlend(dt: number): void {
     const target = this.aiCameraBlendTarget;
-    const k = AI_CAMERA_BLEND_EXP;
+    const k = target < this.aiCameraBlend ? AI_CAMERA_BLEND_EXP_RETURN : AI_CAMERA_BLEND_EXP;
     const a = 1 - Math.exp(-k * Math.max(0, dt));
     this.aiCameraBlend += (target - this.aiCameraBlend) * a;
     if (Math.abs(this.aiCameraBlend - target) < 0.002) this.aiCameraBlend = target;
@@ -594,14 +595,15 @@ export class GameEngine implements Game {
     const aimY = cue.radius + 0.15;
     const useAiShotCamera =
       this.activePlayer === 'ai' && (this.phase === 'AITurn' || this.phase === 'BallSimulation');
-    const blend = useAiShotCamera ? this.aiCameraBlend : 0;
+    /** Oyuncu turunda da `aiCameraBlend` işler; böylece rakip kadrajından yumuşak dönüş olur. */
+    const blend = this.aiCameraBlend;
     const aiPolar =
       AI_CAMERA_PRESET === 'b' ? AI_CAMERA_PRESET_B_POLAR_RAD : AI_CAMERA_PRESET_A_POLAR_RAD;
     const aiAzimuth =
       AI_CAMERA_PRESET === 'b' ? AI_CAMERA_PRESET_B_AZIMUTH_RAD : AI_CAMERA_PRESET_A_AZIMUTH_RAD;
     const polar =
       CAMERA_PLAYER_POLAR_RAD + (aiPolar - CAMERA_PLAYER_POLAR_RAD) * blend;
-    const yawMix = useAiShotCamera ? 0.28 + 0.72 * blend : 0;
+    const yawMix = 0.28 + 0.72 * blend;
     const yawExtra = AI_CAMERA_OPPONENT_YAW_OFFSET_RAD * yawMix;
     const azimuth = lerpAngleRad(CAMERA_PLAYER_AZIMUTH_RAD, aiAzimuth, blend) + yawExtra;
     const sp = Math.sin(polar);
@@ -653,6 +655,7 @@ export class GameEngine implements Game {
         lifetime: 'persistent',
         replication: 'sharedGameplay',
         renderLayer: 'world',
+        tableVelocity: { x: b.vel.x, y: b.vel.y },
       });
     }
 

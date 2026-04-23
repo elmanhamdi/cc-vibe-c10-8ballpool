@@ -107,4 +107,7 @@ const loop = (now: number) => {
   audioAdapter.consume(engine.drainEvents());
   requestAnimationFrame(loop);
 };
-requestAnimationFrame(loop);
+
+void sceneAdapter.preload([]).then(() => {
+  requestAnimationFrame(loop);
+});

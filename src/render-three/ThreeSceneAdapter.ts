@@ -23,6 +23,9 @@ const PLAYFIELD_RENDER_Y_OFFSET = -6;
 
 const TABLE_RAY_PLANE_W = -(TABLE_SCENE_Y_LIFT + TABLE_PLAY_SURFACE_LOCAL_Y + PLAYFIELD_RENDER_Y_OFFSET);
 
+/** `public/textures/balls/` (tercih) veya `public/textures/` — `1.jpeg`…`15.jpeg`, isteğe bağlı `cue.jpeg` / `0.jpeg`. */
+const BALL_TEXTURE_DIRS = ['/textures/balls/', '/textures/'] as const;
+
 /**
  * Maps portable `RenderWorldState` to a Three.js scene (guide §4).
  * Owns THREE.Scene, caches meshes by stable `objectId`.
@@ -38,10 +41,17 @@ export class ThreeSceneAdapter {
   private readonly objectById = new Map<string, THREE.Object3D>();
   private readonly polylineById = new Map<string, THREE.Line>();
   private readonly ballGeo: THREE.SphereGeometry;
+  /** Per-ball rolling quaternion (render); integrated from `tableVelocity` + real frame dt. */
+  private readonly ballRollQuat = new Map<string, THREE.Quaternion>();
+  private readonly ballLastPos = new Map<string, THREE.Vector3>();
+  private readonly tmpRollAxis = new THREE.Vector3();
+  private readonly tmpRollDelta = new THREE.Quaternion();
   private readonly tableGroup = new THREE.Group();
   private readonly cueGroup = new THREE.Group();
   private cueShaft!: THREE.Mesh;
   private readonly physicsTable: Table;
+  /** Top numarası → diffuse (1–15, 0 = isteka); paylaşılan `Texture` referansı. */
+  private readonly ballDiffuseByNumber = new Map<number, THREE.Texture>();
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.physicsTable = new Table();
@@ -72,12 +82,67 @@ export class ThreeSceneAdapter {
   /** Preload declared templates/models (guide §6). */
   async preload(templateIds: readonly string[]): Promise<void> {
     void templateIds;
-    return Promise.resolve();
+    await this.loadBallDiffuseTextures();
   }
 
   dispose(): void {
+    for (const t of this.ballDiffuseByNumber.values()) {
+      t.dispose();
+    }
+    this.ballDiffuseByNumber.clear();
     this.renderer.dispose();
     this.ballGeo.dispose();
+  }
+
+  private async loadBallDiffuseTextures(): Promise<void> {
+    for (const t of this.ballDiffuseByNumber.values()) {
+      t.dispose();
+    }
+    this.ballDiffuseByNumber.clear();
+
+    const loader = new THREE.TextureLoader();
+    const exts = ['jpeg', 'jpg', 'png'] as const;
+
+    const tryOne = async (path: string): Promise<THREE.Texture | null> => {
+      try {
+        const tex = await loader.loadAsync(path);
+        configureBallDiffuseMap(tex);
+        return tex;
+      } catch {
+        return null;
+      }
+    };
+
+    const tryNumbered = async (n: number): Promise<THREE.Texture | null> => {
+      for (const dir of BALL_TEXTURE_DIRS) {
+        for (const ext of exts) {
+          const t = await tryOne(`${dir}${n}.${ext}`);
+          if (t) return t;
+        }
+      }
+      return null;
+    };
+
+    await Promise.all(
+      Array.from({ length: 15 }, (_, i) => {
+        const n = i + 1;
+        return (async () => {
+          const t = await tryNumbered(n);
+          if (t) this.ballDiffuseByNumber.set(n, t);
+        })();
+      }),
+    );
+
+    let cueTex: THREE.Texture | null = null;
+    for (const dir of BALL_TEXTURE_DIRS) {
+      cueTex =
+        (await tryOne(`${dir}cue.jpeg`)) ??
+        (await tryOne(`${dir}cue.jpg`)) ??
+        (await tryOne(`${dir}cue.png`));
+      if (cueTex) break;
+    }
+    cueTex ??= await tryNumbered(0);
+    if (cueTex) this.ballDiffuseByNumber.set(0, cueTex);
   }
 
   resize(width: number, height: number): void {
@@ -102,13 +167,13 @@ export class ThreeSceneAdapter {
     return { x: this.hit.x + tw / 2, y: this.hit.z + th / 2 };
   }
 
-  render(state: RenderWorldState, _dtSec: number): void {
-    void _dtSec;
+  render(state: RenderWorldState, dtSec: number): void {
+    const dt = Math.max(0, Math.min(0.08, dtSec));
     if (state.ambientColorHex) {
       this.scene.background = new THREE.Color(state.ambientColorHex);
     }
     this.applyCamera(state.camera);
-    this.syncWorldObjects(state.objects);
+    this.syncWorldObjects(state.objects, dt);
     this.syncPolylines(state.polylines);
     this.renderer.render(this.scene, this.camera);
   }
@@ -131,7 +196,7 @@ export class ThreeSceneAdapter {
     }
   }
 
-  private syncWorldObjects(objects: readonly WorldObjectState[]): void {
+  private syncWorldObjects(objects: readonly WorldObjectState[], dtSec: number): void {
     const seen = new Set<string>();
     for (const o of objects) {
       seen.add(o.objectId);
@@ -149,14 +214,65 @@ export class ThreeSceneAdapter {
       if (!obj) continue;
       obj.visible = o.visible;
       this.applyTransform(obj, o);
+      // `instanceof THREE.Mesh` can fail if multiple three bundles exist; `type` is reliable.
+      if (o.objectId.startsWith('ball.') && (obj as THREE.Object3D).type === 'Mesh') {
+        this.applyBallRollVisual(obj as THREE.Mesh, o, dtSec);
+      }
     }
     for (const [id, obj] of this.objectById) {
       if (!seen.has(id)) {
+        this.ballRollQuat.delete(id);
+        this.ballLastPos.delete(id);
         this.scene.remove(obj);
         this.objectById.delete(id);
         this.disposeObject(obj);
       }
     }
+  }
+
+  /** ω ∝ ŷ × v on table plane; uses real render dt so spin is visible. */
+  private applyBallRollVisual(mesh: THREE.Mesh, o: WorldObjectState, dtSec: number): void {
+    const id = o.objectId;
+    const p = o.transform.position;
+    const py = p.y + TABLE_SCENE_Y_LIFT + PLAYFIELD_RENDER_Y_OFFSET;
+    const wx = p.x;
+    const wy = py;
+    const wz = p.z;
+
+    let last = this.ballLastPos.get(id);
+    if (!last) {
+      last = new THREE.Vector3();
+      this.ballLastPos.set(id, last);
+    } else {
+      const dx = wx - last.x;
+      const dy = wy - last.y;
+      const dz = wz - last.z;
+      if (dx * dx + dy * dy + dz * dz > 55 * 55) {
+        const rq = this.ballRollQuat.get(id) ?? new THREE.Quaternion();
+        rq.identity();
+        this.ballRollQuat.set(id, rq);
+      }
+    }
+    last.set(wx, wy, wz);
+
+    let rq = this.ballRollQuat.get(id);
+    if (!rq) {
+      rq = new THREE.Quaternion();
+      this.ballRollQuat.set(id, rq);
+    }
+
+    const tv = o.tableVelocity;
+    const sp = tv ? Math.hypot(tv.x, tv.y) : 0;
+    if (o.visible && tv && sp > 1e-3 && dtSec > 0) {
+      const vx = tv.x;
+      const vz = tv.y;
+      this.tmpRollAxis.set(vz, 0, -vx).normalize();
+      const r = Math.max(o.transform.scale.x, 1e-4);
+      const angle = (sp / r) * dtSec * 1.25;
+      this.tmpRollDelta.setFromAxisAngle(this.tmpRollAxis, angle);
+      rq.premultiply(this.tmpRollDelta);
+    }
+    mesh.quaternion.copy(rq);
   }
 
   private createWorldObject(o: WorldObjectState): THREE.Object3D | null {
@@ -166,7 +282,8 @@ export class ThreeSceneAdapter {
     }
     const ball = parseBallTemplate(o.templateId);
     if (ball) {
-      const mat = makeBallMaterial(ball.kind, ball.num);
+      const diffuse = this.ballDiffuseByNumber.get(ball.num);
+      const mat = makeBallMaterial(ball.kind, ball.num, diffuse);
       const mesh = new THREE.Mesh(this.ballGeo, mat);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
@@ -178,7 +295,9 @@ export class ThreeSceneAdapter {
   private applyTransform(obj: THREE.Object3D, o: WorldObjectState): void {
     const { position: p, rotation: r, scale: s } = o.transform;
     obj.position.set(p.x, p.y + TABLE_SCENE_Y_LIFT + PLAYFIELD_RENDER_Y_OFFSET, p.z);
-    obj.quaternion.set(r.x, r.y, r.z, r.w);
+    if (!o.objectId.startsWith('ball.')) {
+      obj.quaternion.set(r.x, r.y, r.z, r.w);
+    }
     obj.scale.set(s.x, s.y, s.z);
   }
 
@@ -463,6 +582,14 @@ export class ThreeSceneAdapter {
   }
 }
 
+function configureBallDiffuseMap(tex: THREE.Texture): void {
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+}
+
 function parseBallTemplate(templateId: string): { kind: BallKind; num: number } | null {
   if (templateId === AssetIds.ballCue) return { kind: 'cue', num: 0 };
   if (templateId === AssetIds.ballEight) return { kind: 'eight', num: 8 };
@@ -471,6 +598,36 @@ function parseBallTemplate(templateId: string): { kind: BallKind; num: number } 
   const stripe = templateId.match(/^ball\.stripe\.(\d+)$/);
   if (stripe) return { kind: 'stripe', num: Number(stripe[1]) };
   return null;
+}
+
+/** Object-space tint so ball rotation is visible (solids/cue/8 were visually symmetric). */
+function patchBallRollShader(shader: { vertexShader: string; fragmentShader: string }): void {
+  if (shader.vertexShader.includes('vRollObjPos')) return;
+  shader.vertexShader = shader.vertexShader.replace(
+    '#include <common>',
+    `#include <common>
+varying vec3 vRollObjPos;`,
+  );
+  shader.vertexShader = shader.vertexShader.replace(
+    '#include <begin_vertex>',
+    `#include <begin_vertex>
+vRollObjPos = position;`,
+  );
+  shader.fragmentShader = shader.fragmentShader.replace(
+    '#include <common>',
+    `#include <common>
+varying vec3 vRollObjPos;`,
+  );
+}
+
+const ROLL_VISUAL_MOD = `diffuseColor.rgb *= 1.0 + 0.14 * sin( dot( vRollObjPos, vec3( 0.94, 1.09, 1.05 ) ) * 0.2 );`;
+
+function appendRollToColorFragment(shader: { fragmentShader: string }): void {
+  shader.fragmentShader = shader.fragmentShader.replace(
+    '#include <color_fragment>',
+    `#include <color_fragment>
+${ROLL_VISUAL_MOD}`,
+  );
 }
 
 function createFeltTexture(): THREE.CanvasTexture {
@@ -506,26 +663,53 @@ function createFeltTexture(): THREE.CanvasTexture {
   return tex;
 }
 
-function makeBallMaterial(kind: BallKind, num: number): THREE.MeshStandardMaterial | THREE.MeshPhysicalMaterial {
+function makeBallMaterial(
+  kind: BallKind,
+  num: number,
+  diffuse: THREE.Texture | undefined,
+): THREE.MeshStandardMaterial | THREE.MeshPhysicalMaterial {
+  if (diffuse) {
+    return new THREE.MeshStandardMaterial({
+      map: diffuse,
+      color: 0xffffff,
+      roughness: 0.38,
+      metalness: 0.07,
+    });
+  }
   if (kind === 'cue') {
-    return new THREE.MeshPhysicalMaterial({
+    const mat = new THREE.MeshPhysicalMaterial({
       color: 0xf4f7ff,
       roughness: 0.22,
       metalness: 0.04,
       clearcoat: 0.42,
       clearcoatRoughness: 0.18,
     });
+    mat.onBeforeCompile = (shader) => {
+      patchBallRollShader(shader);
+      appendRollToColorFragment(shader);
+    };
+    return mat;
   }
   if (kind === 'eight') {
-    return new THREE.MeshStandardMaterial({
+    const mat = new THREE.MeshStandardMaterial({
       color: 0x111111,
       roughness: 0.4,
       metalness: 0.18,
     });
+    mat.onBeforeCompile = (shader) => {
+      patchBallRollShader(shader);
+      appendRollToColorFragment(shader);
+    };
+    return mat;
   }
   if (kind === 'solid') {
     const c = new THREE.Color(solidHex(num));
-    return new THREE.MeshStandardMaterial({ color: c, roughness: 0.38, metalness: 0.1 });
+    const mat = new THREE.MeshStandardMaterial({ color: c, roughness: 0.38, metalness: 0.1 });
+    mat.onBeforeCompile = (shader) => {
+      patchBallRollShader(shader);
+      appendRollToColorFragment(shader);
+    };
+    return mat;
   }
   return makeStripeBallMaterial(num);
 }
@@ -538,9 +722,11 @@ function makeStripeBallMaterial(num: number): THREE.MeshStandardMaterial {
     metalness: 0.08,
   });
   mat.onBeforeCompile = (shader) => {
+    patchBallRollShader(shader);
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <color_fragment>',
       `#include <color_fragment>
+${ROLL_VISUAL_MOD}
       {
         vec3 n = normalize( vNormal );
         float pole = smoothstep( 0.38, 0.78, abs( n.y ) );

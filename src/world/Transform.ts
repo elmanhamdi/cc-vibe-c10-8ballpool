@@ -13,3 +13,4 @@ export function uniformScale(s: number): Vec3Data {
 export function transformAt(pos: Vec3Data, scale: Vec3Data = uniformScale(1)): TransformState {
   return { position: pos, rotation: { ...IDENTITY_QUAT }, scale };
 }
+

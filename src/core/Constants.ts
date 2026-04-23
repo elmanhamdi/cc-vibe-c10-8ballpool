@@ -17,7 +17,7 @@ export const CAMERA_PLAYER_POLAR_RAD = CAMERA_ORBIT_RAD;
 export const CAMERA_PLAYER_AZIMUTH_RAD = Math.PI / 2;
 
 /**
- * Rakip vuruşu + top simülasyonu (aktif oyuncu AI): kamera denemeleri.
+ * Rakip turu: `AI_CAMERA_CINEMATIC_CHANCE` ile bu preset’e blend; aksi halde oyuncuya yakın kadraj.
  * `'a'` ≈ (0°, 45°, 90°) — YZ düzleminde, +Y’den 45° (x=0, daha yandan).
  * `'b'` ≈ (45°, 45°) — XZ’de 45° azimut, +Y’den 45° (köşegen).
  */
@@ -36,10 +36,18 @@ export const AI_CAMERA_PRESET_B_AZIMUTH_RAD = Math.PI / 4;
  */
 export const AI_CAMERA_OPPONENT_YAW_OFFSET_RAD = 0.24;
 
-/** Rakip turunda alternatif kadrajı bu olasılıkla dene (0–1). */
-export const AI_CAMERA_CINEMATIC_CHANCE = 0.38;
+/**
+ * Rakip turunda preset “sinematik” kadraja geçme olasılığı (0–1).
+ * `0` = rakip vururken kamera açısı değişmez (oyuncu kadrajı). Ara sıra için örn. `0.1`.
+ */
+export const AI_CAMERA_CINEMATIC_CHANCE = 0.3;
 
 /**
- * Blend hızı (üstel yaklaşım). ~2–3: birkaç saniyede yumuşak geçiş; daha yüksek = daha hızlı.
+ * Rakip kadrajına doğru blend hızı (üstel). Daha yüksek = daha hızlı.
  */
-export const AI_CAMERA_BLEND_EXP = 2.2;
+export const AI_CAMERA_BLEND_EXP = 2.0;
+
+/**
+ * Sıra oyuncuya dönünce preset’ten çıkış — daha düşük = daha yavaş, yumuşak dönüş.
+ */
+export const AI_CAMERA_BLEND_EXP_RETURN = 1.25;

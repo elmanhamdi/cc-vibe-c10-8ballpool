@@ -29,6 +29,8 @@ export interface WorldObjectState {
   visible: boolean;
   lifetime: WorldObjectLifetime;
   replication: WorldObjectReplication;
+  /** Physics table-plane velocity (x, y) for rolling visuals; optional. */
+  tableVelocity?: { x: number; y: number };
   renderLayer?: string;
   renderOrder?: number;
   tintHex?: string;

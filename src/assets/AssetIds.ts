@@ -10,4 +10,12 @@ export const AssetIds = {
   lineAim: 'line.aim',
   lineGhostObject: 'line.ghostObject',
   lineGhostCue: 'line.ghostCue',
+  /** Diffuse map manifest keys under `tex.ball.*` (see AssetManifest). */
+  texBall: (n: number) => `tex.ball.${n}` as const,
+  texBallCue: 'tex.ball.cue',
+  texBallZeroFallback: 'tex.ball.zeroFallback',
+  soundCueStrike: 'sound.pool.cueStrike',
+  soundPocket: 'sound.pool.pocket',
+  soundBallsSettle: 'sound.pool.ballsSettle',
+  soundBallBall: 'sound.pool.ballBall',
 } as const;

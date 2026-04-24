@@ -12,7 +12,7 @@ import {
 } from '../gameplay/RulesEngine.js';
 import { AIController, type AIShotPlan } from '../ai/AIController.js';
 import { CAREER_OPPONENTS } from '../ai/AICharacters.js';
-import { tungReactionPortraitUrlForLine } from '../opponents/tungReactions.js';
+import { tungReactionPortraitAssetIdForLine } from '../opponents/tungReactions.js';
 import type { AICharacterProfile } from '../ai/types.js';
 import { DialogueManager } from '../systems/DialogueManager.js';
 import type { DialogueCategory } from '../systems/dialogueLines.js';
@@ -97,7 +97,7 @@ export class GameEngine implements Game {
     ttl: number;
     durationTotal: number;
     beatId: number;
-    portraitSrc: string | null;
+    portraitAssetId: string | null;
   } | null = null;
   private opponentReactionBeatSeq = 0;
 
@@ -119,6 +119,10 @@ export class GameEngine implements Game {
     const out = this.eventQueue.slice();
     this.eventQueue.length = 0;
     return out;
+  }
+
+  private pushSound(soundId: string, volume?: number): void {
+    this.eventQueue.push({ type: 'sound', soundId, volume });
   }
 
   getOpponent(): AICharacterProfile {
@@ -170,6 +174,7 @@ export class GameEngine implements Game {
     if (!this.physics.cue.active) return false;
     this.physics.applyShot(angle, power01, spinX, spinY);
     this.physics.beginShot();
+    this.pushSound(AssetIds.soundCueStrike, 0.55);
     this.phase = 'BallSimulation';
     this.turnClock.stop();
     return true;
@@ -187,6 +192,7 @@ export class GameEngine implements Game {
     this.pendingAI = null;
     this.physics.applyShot(plan.angle, plan.power01, plan.spinX, plan.spinY);
     this.physics.beginShot();
+    this.pushSound(AssetIds.soundCueStrike, 0.55);
     this.phase = 'BallSimulation';
     this.aiThink = 0;
   }
@@ -246,6 +252,11 @@ export class GameEngine implements Game {
 
     if (this.phase === 'BallSimulation') {
       const done = this.physics.stepFrame(dt);
+      const ballHits = this.physics.getBallBallHitsThisFrame();
+      const maxHitsPerFrame = 8;
+      for (let i = 0; i < Math.min(ballHits, maxHitsPerFrame); i++) {
+        this.pushSound(AssetIds.soundBallBall, 0.38);
+      }
       if (done) {
         const shot = this.physics.snapshotOutcome();
         const shooter = this.activePlayer;
@@ -273,6 +284,10 @@ export class GameEngine implements Game {
   }
 
   private resolveTurn(res: TurnResolution, shooter: PlayerId, shot?: ShotOutcome): void {
+    if (shot) {
+      this.pushSound(AssetIds.soundBallsSettle, 0.22);
+      if (shot.potted.length > 0) this.pushSound(AssetIds.soundPocket, 0.45);
+    }
     this.lastHudReason = res.reason;
     this.maybeTaunt(res, shooter, shot);
 
@@ -391,14 +406,13 @@ export class GameEngine implements Game {
     const ttl = 4.9 + Math.random() * 2.1;
     this.opponentReactionBeatSeq += 1;
     const opp = this.getOpponent();
-    const portraitSrc =
-      opp.id === 'tung' ? tungReactionPortraitUrlForLine(import.meta.env.BASE_URL, spoken) : null;
+    const portraitAssetId = opp.id === 'tung' ? tungReactionPortraitAssetIdForLine(spoken) : null;
     this.opponentReaction = {
       text: spoken,
       ttl,
       durationTotal: ttl,
       beatId: this.opponentReactionBeatSeq,
-      portraitSrc,
+      portraitAssetId,
     };
     this.dialogue.alignBubbleTtl(ttl);
   }
@@ -538,7 +552,7 @@ export class GameEngine implements Game {
         opponentReaction: this.opponentReaction
           ? {
               text: this.opponentReaction.text,
-              portraitSrc: this.opponentReaction.portraitSrc,
+              portraitAssetId: this.opponentReaction.portraitAssetId,
               durationSec: this.opponentReaction.durationTotal,
               beatId: this.opponentReaction.beatId,
             }
@@ -831,6 +845,17 @@ function segmentToPolyline(
   };
 }
 
+/** Bant çizgileri — fizikte çarpışma; top geçemez. */
+const DEBUG_CUSHION_BARRIER = 0xff2222;
+/** Cep ağzı / throat / cep halkaları — geçilebilir (delik); yeşil. */
+const DEBUG_PASS_THROAT = 0x55dd77;
+const DEBUG_PASS_POCKET_OUTER = 0x44cc66;
+const DEBUG_PASS_POCKET_INNER = 0x66ee99;
+/** Oynanabilir dikdörtgen referansı (engel değil). */
+const DEBUG_PLAY_REF = 0x7799bb;
+/** Masa dış çerçeve referansı. */
+const DEBUG_OUTER_REF = 0x999999;
+
 function buildPhysicsDebugLines(
   t: Table,
   tw: number,
@@ -865,7 +890,7 @@ function buildPhysicsDebugLines(
       vec3(seg.bx - tw * 0.5, py, seg.by - th * 0.5),
     );
   }
-  pushSeg(cushionVerts, 0xff44ee, 'cush');
+  pushSeg(cushionVerts, DEBUG_CUSHION_BARRIER, 'cush');
 
   const throatVerts: import('../world/renderTypes.js').Vec3Data[] = [];
   const pushW = (px: number, pz: number, yv: number): void => {
@@ -890,7 +915,7 @@ function buildPhysicsDebugLines(
   throatLine(innerL, cy - mh, innerL, cy + mh);
   throatLine(innerR, cy - mh, innerR, cy + mh);
   for (let i = 0; i + 1 < throatVerts.length; i += 2) {
-    pushSeg([throatVerts[i]!, throatVerts[i + 1]!], 0x66ff66, 'throat');
+    pushSeg([throatVerts[i]!, throatVerts[i + 1]!], DEBUG_PASS_THROAT, 'throat');
   }
 
   const pocketSegs = 40;
@@ -903,7 +928,7 @@ function buildPhysicsDebugLines(
       ring.push(vec3(x - tw * 0.5, py, z - th * 0.5));
     }
     for (let i = 0; i < pocketSegs; i++) {
-      pushSeg([ring[i]!, ring[i + 1]!], 0xffaa22, 'pocket');
+      pushSeg([ring[i]!, ring[i + 1]!], DEBUG_PASS_POCKET_OUTER, 'pocket');
     }
     const potR = Math.max(0.5, pocket.radius - ballR * 0.35);
     const innerRing: import('../world/renderTypes.js').Vec3Data[] = [];
@@ -914,7 +939,7 @@ function buildPhysicsDebugLines(
       innerRing.push(vec3(x2 - tw * 0.5, pyPot, z2 - th * 0.5));
     }
     for (let i = 0; i < pocketSegs; i++) {
-      pushSeg([innerRing[i]!, innerRing[i + 1]!], 0x00ffcc, 'pocketInner');
+      pushSeg([innerRing[i]!, innerRing[i + 1]!], DEBUG_PASS_POCKET_INNER, 'pocketInner');
     }
   }
 
@@ -926,7 +951,7 @@ function buildPhysicsDebugLines(
     vec3(t.playableMinX - tw * 0.5, py, t.playableMinY - th * 0.5),
   ];
   for (let i = 0; i < playLoop.length - 1; i++) {
-    pushSeg([playLoop[i]!, playLoop[i + 1]!], 0x44ffee, 'play');
+    pushSeg([playLoop[i]!, playLoop[i + 1]!], DEBUG_PLAY_REF, 'play');
   }
 
   const outerLoop = [
@@ -941,8 +966,8 @@ function buildPhysicsDebugLines(
       objectId: `debug.phys.outer.${i}`,
       templateId: 'debug.line',
       points: [outerLoop[i]!, outerLoop[i + 1]!],
-      colorHex: '#ffffff',
-      opacity: 0.35,
+      colorHex: `#${DEBUG_OUTER_REF.toString(16).padStart(6, '0')}`,
+      opacity: 0.5,
       visible: true,
       lifetime: 'oneShot',
       replication: 'localCosmetic',

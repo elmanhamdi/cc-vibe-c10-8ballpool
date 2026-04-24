@@ -9,6 +9,8 @@ const ENGLISH_DECAY = 1.8;
 const CURL_STRENGTH = 0.55;
 const STOP_EPS = 0.012;
 const MAX_SUBSTEPS = 6;
+/** Min relative speed along normal (|dot|) to count as audible ball–ball hit (avoids resting jitter). */
+const BALL_BALL_HIT_SOUND_MIN_REL = 14;
 
 export interface PottedEvent {
   id: number;
@@ -33,6 +35,8 @@ export class CollisionSystem {
   readonly cue: Ball;
   private shotActive = false;
   private shotT = 0;
+  /** Impulses counted this `stepFrame` (all substeps); reset at start of each frame. */
+  private ballBallHitsThisFrame = 0;
   private readonly shotOutcome: ShotOutcome = {
     firstHitId: null,
     scratched: false,
@@ -87,6 +91,7 @@ export class CollisionSystem {
   beginShot(): void {
     this.shotActive = true;
     this.shotT = 0;
+    this.ballBallHitsThisFrame = 0;
     this.shotOutcome.firstHitId = null;
     this.shotOutcome.scratched = false;
     this.shotOutcome.potted.length = 0;
@@ -103,6 +108,7 @@ export class CollisionSystem {
       return true;
     }
 
+    this.ballBallHitsThisFrame = 0;
     const substeps = MAX_SUBSTEPS;
     const h = dt / substeps;
     for (let k = 0; k < substeps; k++) {
@@ -124,6 +130,11 @@ export class CollisionSystem {
       return true;
     }
     return false;
+  }
+
+  /** Ball–ball impacts accumulated in the last `stepFrame` call (for SFX). */
+  getBallBallHitsThisFrame(): number {
+    return this.ballBallHitsThisFrame;
   }
 
   snapshotOutcome(): ShotOutcome {
@@ -217,6 +228,10 @@ export class CollisionSystem {
         const impulse = tmpN.clone().scale(jImp);
         a.vel.sub(impulse);
         b.vel.add(impulse);
+
+        if (Math.abs(velAlongN) >= BALL_BALL_HIT_SOUND_MIN_REL) {
+          this.ballBallHitsThisFrame += 1;
+        }
 
         if (a.kind === 'cue' || b.kind === 'cue') {
           outcome.anyBallMoved = true;

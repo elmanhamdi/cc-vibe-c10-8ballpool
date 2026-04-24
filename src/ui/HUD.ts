@@ -1,12 +1,16 @@
 import type { GameInputCommand } from '../core/gameContract.js';
 import type { HudState, PotHudState } from '../world/renderTypes.js';
+import { AssetManifest } from '../assets/AssetManifest.js';
+import { resolveBrowserAssetUrl } from '../assets/resolveBrowserAssetUrl.js';
 
-const base = () => import.meta.env.BASE_URL;
-const avatar = (name: 'me.svg' | 'opp.svg') => `${base()}avatars/${name}`;
-
-function opponentHudAvatarSrc(opponentId: string): string {
-  if (opponentId === 'tung') return `${base()}opponents/tung/hud/tung_avatar.png`;
-  return `${avatar('opp.svg')}?v=${encodeURIComponent(opponentId)}`;
+function opponentHudAvatarUrl(assetBaseUrl: string, opponentId: string): string {
+  if (opponentId === 'tung') {
+    const e = AssetManifest['ui.opponent.tung.avatar'];
+    return resolveBrowserAssetUrl(assetBaseUrl, e.browserUrl);
+  }
+  const e = AssetManifest['ui.avatar.genericOpponent'];
+  const u = resolveBrowserAssetUrl(assetBaseUrl, e.browserUrl);
+  return `${u}?v=${encodeURIComponent(opponentId)}`;
 }
 
 export class HUD {
@@ -15,7 +19,6 @@ export class HUD {
   private readonly oppReaction: HTMLElement;
   /** So each reaction beat restarts CSS motion from 0%. */
   private lastOppReactionBeatId = -1;
-  private readonly menuCorner: HTMLButtonElement;
   private readonly bubble: HTMLElement;
   private readonly menu: HTMLElement;
   private readonly end: HTMLElement;
@@ -26,6 +29,7 @@ export class HUD {
     root: HTMLElement,
     private readonly getHud: () => HudState,
     private readonly pushCommand: (c: GameInputCommand) => void,
+    private readonly assetBaseUrl: string,
   ) {
     this.root = root;
     this.gameRoot = root.parentElement?.id === 'game-root' ? root.parentElement : null;
@@ -37,12 +41,6 @@ export class HUD {
       <div class="sub">Career — single player</div>
     `;
 
-    this.menuCorner = el('button', 'hud-menu-corner interactive') as HTMLButtonElement;
-    this.menuCorner.type = 'button';
-    this.menuCorner.id = 'btn-menu-compact';
-    this.menuCorner.setAttribute('aria-label', 'Restart match');
-    this.menuCorner.textContent = '☰';
-
     this.topStack = el('div', 'hud-top-stack');
     this.topStack.innerHTML = `
       <div class="hud-top">
@@ -52,7 +50,7 @@ export class HUD {
               <div class="hud-ident-row">
                 <div class="avatar-frame" id="ai-avatar-frame" aria-hidden="true">
                   <div class="avatar-inner">
-                    <img id="ai-avatar-img" class="avatar-photo" src="${avatar('opp.svg')}" alt="" decoding="async" />
+                    <img id="ai-avatar-img" class="avatar-photo" src="${resolveBrowserAssetUrl(this.assetBaseUrl, AssetManifest['ui.avatar.genericOpponent'].browserUrl)}" alt="" decoding="async" />
                   </div>
                 </div>
                 <div class="hud-side-text hud-ident-text">
@@ -81,7 +79,7 @@ export class HUD {
                 </div>
                 <div class="avatar-frame" id="pl-avatar-frame" aria-hidden="true">
                   <div class="avatar-inner">
-                    <img id="pl-avatar-img" class="avatar-photo" src="${avatar('me.svg')}" alt="" decoding="async" />
+                    <img id="pl-avatar-img" class="avatar-photo" src="${resolveBrowserAssetUrl(this.assetBaseUrl, AssetManifest['ui.avatar.player'].browserUrl)}" alt="" decoding="async" />
                   </div>
                 </div>
               </div>
@@ -132,14 +130,13 @@ export class HUD {
       </div>
     `;
 
-    root.append(this.menu, this.menuCorner, this.topStack, this.oppReaction, this.bubble, this.end);
+    root.append(this.menu, this.topStack, this.oppReaction, this.bubble, this.end);
     this.hudLayoutObserver = new ResizeObserver(() => this.applyHudTopBandFromLayout());
     this.hudLayoutObserver.observe(this.topStack);
     this.hideGame();
   }
 
   bindHandlers(): void {
-    this.menuCorner.addEventListener('click', () => this.pushCommand({ type: 'menu.restart' }));
     this.end.querySelector('#btn-next')!.addEventListener('click', () => this.pushCommand({ type: 'menu.next' }));
     this.end.querySelector('#btn-home')!.addEventListener('click', () => this.pushCommand({ type: 'menu.home' }));
 
@@ -174,7 +171,6 @@ export class HUD {
         this.syncEndOverlay(eb.lastMatchWon === true, eb.reason);
       }
       this.topStack.style.display = 'none';
-      this.menuCorner.style.display = 'none';
       this.bubble.style.display = 'none';
       this.lastOppReactionBeatId = -1;
       this.oppReaction.querySelector('.opp-reaction-stage')?.classList.remove('opp-react-anim');
@@ -185,11 +181,9 @@ export class HUD {
 
     const inMatch = phase !== 'MainMenu';
     this.topStack.style.display = inMatch ? 'flex' : 'none';
-    this.menuCorner.style.display = inMatch ? 'block' : 'none';
     this.bubble.style.display = inMatch ? 'block' : 'none';
 
     if (!inMatch) {
-      this.menuCorner.style.display = 'none';
       this.oppReaction.classList.remove('show');
       this.clearHudTopBand();
       return;
@@ -217,7 +211,7 @@ export class HUD {
     );
 
     const aiImg = this.topStack.querySelector('#ai-avatar-img') as HTMLImageElement;
-    aiImg.src = opponentHudAvatarSrc(opp.id);
+    aiImg.src = opponentHudAvatarUrl(this.assetBaseUrl, opp.id);
     if (opp.id === 'tung') {
       aiImg.style.filter = '';
     } else {
@@ -234,9 +228,12 @@ export class HUD {
       this.oppReaction.classList.add('show');
       this.oppReaction.querySelector('#opp-reaction-text')!.textContent = react.text;
       const portrait = this.oppReaction.querySelector('#opp-reaction-portrait') as HTMLElement;
-      if (react.portraitSrc) {
+      if (react.portraitAssetId) {
+        const entry = AssetManifest[react.portraitAssetId as keyof typeof AssetManifest];
+        const src = entry ? resolveBrowserAssetUrl(this.assetBaseUrl, entry.browserUrl) : '';
         portrait.classList.remove('opp-reaction-portrait--placeholder');
-        portrait.style.backgroundImage = `url("${react.portraitSrc}")`;
+        portrait.style.backgroundImage = src ? `url("${src}")` : '';
+        if (!src) portrait.classList.add('opp-reaction-portrait--placeholder');
       } else {
         portrait.classList.add('opp-reaction-portrait--placeholder');
         portrait.style.backgroundImage = '';
@@ -348,7 +345,6 @@ export class HUD {
 
   private hideGame(): void {
     this.topStack.style.display = 'none';
-    this.menuCorner.style.display = 'none';
     this.lastOppReactionBeatId = -1;
     this.oppReaction.querySelector('.opp-reaction-stage')?.classList.remove('opp-react-anim');
     this.oppReaction.classList.remove('show');

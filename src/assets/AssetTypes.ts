@@ -11,7 +11,7 @@ export interface AssetManifestEntry {
   kind: AssetKind;
   browserUrl: string;
   futureMhsPath?: string;
-  sourceFormat?: 'glb' | 'gltf' | 'fbx' | 'png' | 'jpg' | 'webp' | 'mp3' | 'ogg' | 'wav';
+  sourceFormat?: 'glb' | 'gltf' | 'fbx' | 'png' | 'jpg' | 'webp' | 'svg' | 'mp3' | 'ogg' | 'wav';
   unitScale?: number;
   forwardAxis?: '+X' | '-X' | '+Y' | '-Y' | '+Z' | '-Z';
   upAxis?: '+Y' | '+Z';

@@ -4,6 +4,8 @@ import type { BallKind } from '../physics/Ball.js';
 import { Table } from '../physics/Table.js';
 import { AssetManifest } from '../assets/AssetManifest.js';
 import { AssetIds } from '../assets/AssetIds.js';
+import { resolveBrowserAssetUrl } from '../assets/resolveBrowserAssetUrl.js';
+import type { RenderRuntimeHints } from '../core/gameContract.js';
 import type { PolylineObjectState, RenderWorldState, WorldObjectState } from '../world/renderTypes.js';
 
 /** `Table.glb` Y ölçeği — model ince kalıyorsa artır (fizik 2D, yalnızca görsel). */
@@ -23,8 +25,10 @@ const PLAYFIELD_RENDER_Y_OFFSET = -6;
 
 const TABLE_RAY_PLANE_W = -(TABLE_SCENE_Y_LIFT + TABLE_PLAY_SURFACE_LOCAL_Y + PLAYFIELD_RENDER_Y_OFFSET);
 
-/** `public/textures/balls/` (tercih) veya `public/textures/` — `1.jpeg`…`15.jpeg`, isteğe bağlı `cue.jpeg` / `0.jpeg`. */
-const BALL_TEXTURE_DIRS = ['/textures/balls/', '/textures/'] as const;
+export type ThreeSceneAdapterOptions = {
+  /** Vite `import.meta.env.BASE_URL` for `public/` textures and GLB fallbacks. */
+  assetBaseUrl?: string;
+};
 
 /**
  * Maps portable `RenderWorldState` to a Three.js scene (guide §4).
@@ -52,8 +56,13 @@ export class ThreeSceneAdapter {
   private readonly physicsTable: Table;
   /** Top numarası → diffuse (1–15, 0 = isteka); paylaşılan `Texture` referansı. */
   private readonly ballDiffuseByNumber = new Map<number, THREE.Texture>();
+  private readonly assetBaseUrl: string;
 
-  constructor(private readonly canvas: HTMLCanvasElement) {
+  constructor(
+    private readonly canvas: HTMLCanvasElement,
+    options?: ThreeSceneAdapterOptions,
+  ) {
+    this.assetBaseUrl = options?.assetBaseUrl ?? '/';
     this.physicsTable = new Table();
 
     this.scene.background = new THREE.Color(0x0b0f14);
@@ -94,54 +103,63 @@ export class ThreeSceneAdapter {
     this.ballGeo.dispose();
   }
 
+  private resolveAssetUrl(browserUrl: string): string {
+    return resolveBrowserAssetUrl(this.assetBaseUrl, browserUrl);
+  }
+
+  private async tryLoadTextureUrl(fullUrl: string): Promise<THREE.Texture | null> {
+    const loader = new THREE.TextureLoader();
+    try {
+      const tex = await loader.loadAsync(fullUrl);
+      configureBallDiffuseMap(tex);
+      return tex;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Manifest path plus .jpg/.jpeg/.png; if path uses `textures/balls/`, also tries `textures/`. */
+  private async loadBallDiffuseFromManifestKey(manifestKey: string): Promise<THREE.Texture | null> {
+    const entry = AssetManifest[manifestKey as keyof typeof AssetManifest];
+    if (!entry || entry.kind !== 'texture') return null;
+    const stem = entry.browserUrl.replace(/\.(jpe?g|png)$/i, '');
+    const exts = ['jpg', 'jpeg', 'png'] as const;
+    const relPaths: string[] = [];
+    for (const ext of exts) {
+      relPaths.push(`${stem}.${ext}`);
+    }
+    if (stem.includes('/balls/')) {
+      const altStem = stem.replace('/balls/', '/');
+      for (const ext of exts) {
+        relPaths.push(`${altStem}.${ext}`);
+      }
+    }
+    for (const rel of relPaths) {
+      const t = await this.tryLoadTextureUrl(this.resolveAssetUrl(rel));
+      if (t) return t;
+    }
+    return null;
+  }
+
   private async loadBallDiffuseTextures(): Promise<void> {
     for (const t of this.ballDiffuseByNumber.values()) {
       t.dispose();
     }
     this.ballDiffuseByNumber.clear();
 
-    const loader = new THREE.TextureLoader();
-    const exts = ['jpeg', 'jpg', 'png'] as const;
-
-    const tryOne = async (path: string): Promise<THREE.Texture | null> => {
-      try {
-        const tex = await loader.loadAsync(path);
-        configureBallDiffuseMap(tex);
-        return tex;
-      } catch {
-        return null;
-      }
-    };
-
-    const tryNumbered = async (n: number): Promise<THREE.Texture | null> => {
-      for (const dir of BALL_TEXTURE_DIRS) {
-        for (const ext of exts) {
-          const t = await tryOne(`${dir}${n}.${ext}`);
-          if (t) return t;
-        }
-      }
-      return null;
-    };
-
     await Promise.all(
       Array.from({ length: 15 }, (_, i) => {
         const n = i + 1;
         return (async () => {
-          const t = await tryNumbered(n);
-          if (t) this.ballDiffuseByNumber.set(n, t);
+          const tex = await this.loadBallDiffuseFromManifestKey(AssetIds.texBall(n));
+          if (tex) this.ballDiffuseByNumber.set(n, tex);
         })();
       }),
     );
 
-    let cueTex: THREE.Texture | null = null;
-    for (const dir of BALL_TEXTURE_DIRS) {
-      cueTex =
-        (await tryOne(`${dir}cue.jpeg`)) ??
-        (await tryOne(`${dir}cue.jpg`)) ??
-        (await tryOne(`${dir}cue.png`));
-      if (cueTex) break;
-    }
-    cueTex ??= await tryNumbered(0);
+    const cueTex =
+      (await this.loadBallDiffuseFromManifestKey(AssetIds.texBallCue)) ??
+      (await this.loadBallDiffuseFromManifestKey(AssetIds.texBallZeroFallback));
     if (cueTex) this.ballDiffuseByNumber.set(0, cueTex);
   }
 
@@ -167,11 +185,12 @@ export class ThreeSceneAdapter {
     return { x: this.hit.x + tw / 2, y: this.hit.z + th / 2 };
   }
 
-  render(state: RenderWorldState, dtSec: number): void {
+  render(state: RenderWorldState, dtSec: number, hints: RenderRuntimeHints): void {
     const dt = Math.max(0, Math.min(0.08, dtSec));
     if (state.ambientColorHex) {
       this.scene.background = new THREE.Color(state.ambientColorHex);
     }
+    this.tableGroup.visible = !hints.debugHideTableMesh;
     this.applyCamera(state.camera);
     this.syncWorldObjects(state.objects, dt);
     this.syncPolylines(state.polylines);
@@ -404,7 +423,7 @@ export class ThreeSceneAdapter {
     const entry = AssetManifest['env.tableMesh'];
     const loader = new GLTFLoader();
     loader.load(
-      entry.browserUrl,
+      this.resolveAssetUrl(entry.browserUrl),
       (gltf) => {
         this.tableGroup.clear();
         this.fitTableModelToPhysics(gltf.scene);

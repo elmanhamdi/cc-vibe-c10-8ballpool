@@ -22,6 +22,8 @@ export interface ViewportSize {
 export interface RenderRuntimeHints {
   /** Physics debug overlay (URL `?debug` or local toggle from platform). */
   physicsDebugVisible: boolean;
+  /** Dev: `TableMeshDebugToggle` (T) — masa 3D grubunu gizle. */
+  debugHideTableMesh: boolean;
 }
 
 export interface Game {

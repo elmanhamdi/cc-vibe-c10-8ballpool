@@ -123,8 +123,8 @@ export interface HudState {
     /** Center reaction beat after your shot (portrait + line). */
     opponentReaction: null | {
       text: string;
-      /** Reaction art URL, or null for white placeholder. */
-      portraitSrc: string | null;
+      /** Stable asset id in AssetManifest (e.g. ui.opponent.tung.reaction.laugh); null = placeholder. */
+      portraitAssetId: string | null;
       /** Matches engine TTL so CSS motion can span the whole beat. */
       durationSec: number;
       /** Increments each beat so the HUD can restart CSS animations. */

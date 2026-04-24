@@ -7,6 +7,7 @@ import { BrowserAudioAdapter } from './platform-browser/BrowserAudioAdapter.js';
 import { applyCanvasResize } from './platform-browser/BrowserResize.js';
 import { PhysicsDebugToggle } from './platform-browser/PhysicsDebugToggle.js';
 import { CameraDebugToggle } from './platform-browser/CameraDebugToggle.js';
+import { TableMeshDebugToggle } from './platform-browser/TableMeshDebugToggle.js';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game-canvas')!;
 const hudLayer = document.querySelector<HTMLElement>('#hud-layer')!;
@@ -14,14 +15,21 @@ const gameRoot = document.querySelector<HTMLElement>('#game-root')!;
 
 const commandBuffer: GameInputCommand[] = [];
 const engine = new GameEngine();
-const sceneAdapter = new ThreeSceneAdapter(canvas);
-const audioAdapter = new BrowserAudioAdapter();
+const assetBaseUrl = import.meta.env.BASE_URL;
+const sceneAdapter = new ThreeSceneAdapter(canvas, { assetBaseUrl });
+const audioAdapter = new BrowserAudioAdapter({ assetBaseUrl });
 const physicsDebug = new PhysicsDebugToggle();
 const cameraDebug = new CameraDebugToggle(gameRoot);
+const tableMeshDebug = new TableMeshDebugToggle();
 
-const hudAdapter = new BrowserHudAdapter(hudLayer, engine, (c) => {
-  commandBuffer.push(c);
-});
+const hudAdapter = new BrowserHudAdapter(
+  hudLayer,
+  engine,
+  (c) => {
+    commandBuffer.push(c);
+  },
+  { assetBaseUrl },
+);
 hudAdapter.bind();
 
 function resize(): void {
@@ -40,8 +48,15 @@ function canvasPoint(e: PointerEvent): { sx: number; sy: number } {
   return { sx, sy };
 }
 
+function renderHints() {
+  return {
+    physicsDebugVisible: physicsDebug.get(),
+    debugHideTableMesh: tableMeshDebug.get(),
+  };
+}
+
 function pushPointer(phase: 'down' | 'move' | 'up' | 'cancel', sx: number, sy: number): void {
-  const hints = { physicsDebugVisible: physicsDebug.get() };
+  const hints = renderHints();
   const rw = engine.getRenderWorldState(
     { widthPx: canvas.width, heightPx: canvas.height },
     hints,
@@ -85,12 +100,12 @@ const loop = (now: number) => {
   last = now;
   const cmds = commandBuffer.splice(0, commandBuffer.length);
   engine.update(dt, cmds);
-  const hints = { physicsDebugVisible: physicsDebug.get() };
+  const hints = renderHints();
   const rw = engine.getRenderWorldState(
     { widthPx: canvas.width, heightPx: canvas.height },
     hints,
   );
-  sceneAdapter.render(rw, dt);
+  sceneAdapter.render(rw, dt, hints);
   hudAdapter.sync();
   if (cameraDebug.get()) {
     const d = engine.getOpponentCameraDebug({ widthPx: canvas.width, heightPx: canvas.height });

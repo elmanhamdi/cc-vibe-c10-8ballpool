@@ -9,6 +9,8 @@ const SOUND_ICON_ON_URL = new URL('./sound.png', import.meta.url).href;
 const SOUND_ICON_OFF_URL = new URL('./sound_off.png', import.meta.url).href;
 const SOLID_BALL_ICON_URL = new URL('./SolidBall.png', import.meta.url).href;
 const STRIPE_BALL_ICON_URL = new URL('./StripeBall.png', import.meta.url).href;
+const SHOP_ICON_URL = new URL('./shop.png', import.meta.url).href;
+const PLAY_AGAIN_ICON_URL = new URL('./play-again.png', import.meta.url).href;
 
 function opponentHudAvatarUrl(assetBaseUrl: string, opponentId: string): string {
   if (opponentId === 'tung') {
@@ -200,9 +202,13 @@ export class HUD {
           </div>
         </div>
         <div class="end-actions">
-          <button id="btn-shop" class="btn ghost">Shop</button>
+          <button id="btn-shop" class="btn ghost btn-icon-only" aria-label="Open shop" title="Shop">
+            <img class="btn-icon" src="${SHOP_ICON_URL}" alt="" decoding="async" draggable="false" />
+          </button>
           <div class="end-actions-main">
-            <button id="btn-rematch" class="btn ghost">Rematch</button>
+            <button id="btn-rematch" class="btn ghost btn-icon-only" aria-label="Rematch" title="Rematch">
+              <img class="btn-icon" src="${PLAY_AGAIN_ICON_URL}" alt="" decoding="async" draggable="false" />
+            </button>
             <button id="btn-next" class="btn btn-next primary">Next Match</button>
           </div>
         </div>

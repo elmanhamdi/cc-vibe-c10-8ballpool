@@ -1048,7 +1048,14 @@ export class GameEngine implements Game {
     const dirz = Math.sin(effectiveAim);
     const pull = chargePull * 125;
     const shaftLen = 292;
-    const centerDist = cue.radius + shaftLen * 0.5 + pull;
+    /**
+     * Visual stick has ferrule (6) + leather tip (14) past the shaft top.
+     * Push the stick back by that amount + a small breathing gap so the tip
+     * kisses the cue ball instead of clipping into it at idle aim.
+     */
+    const CUE_TIP_OVERHANG = 20;
+    const CUE_IDLE_GAP = 4;
+    const centerDist = cue.radius + shaftLen * 0.5 + CUE_TIP_OVERHANG + CUE_IDLE_GAP + pull;
     const cx = bx - dirx * centerDist;
     const cz = bz - dirz * centerDist;
 
@@ -1137,6 +1144,11 @@ export class GameEngine implements Game {
       cuePullHandHint,
       cueBallInHandCursorHint,
       opponentCueId: this.getOpponent().cueId,
+      playerCueId: this.profile.equippedCueId,
+      activeCueId:
+        this.activePlayer === 'player'
+          ? this.profile.equippedCueId
+          : this.getOpponent().cueId,
     };
   }
 

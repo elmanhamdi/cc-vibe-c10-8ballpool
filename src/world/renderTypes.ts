@@ -86,6 +86,10 @@ export interface RenderWorldState {
   cueBallInHandCursorHint?: boolean;
   /** Optional cue id for opponent shot preview. */
   opponentCueId?: string;
+  /** Player's currently equipped cue id (used when player is the active shooter). */
+  playerCueId?: string;
+  /** Cue id of whoever is currently aiming/shooting (player or AI). Renderer uses this to style the cue stick. */
+  activeCueId?: string;
 }
 
 export type PotHudState =

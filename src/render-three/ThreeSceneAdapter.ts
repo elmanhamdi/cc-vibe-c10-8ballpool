@@ -72,6 +72,14 @@ export class ThreeSceneAdapter {
   private readonly tableGroup = new THREE.Group();
   private readonly cueGroup = new THREE.Group();
   private cueShaft!: THREE.Mesh;
+  private cueTip!: THREE.Mesh;
+  private cueFerrule!: THREE.Mesh;
+  private cueAccentRing!: THREE.Mesh;
+  private cueWrap!: THREE.Mesh;
+  private cueButt!: THREE.Mesh;
+  private cueButtCap!: THREE.Mesh;
+  private cueButtRing!: THREE.Mesh;
+  private cueAppliedStyleId: string | null = null;
   /** İlk break “çek–vur” ipucu — `cuePullHandHint` açıkken sopada yukarı/aşağı. */
   private cueHandHintSprite: THREE.Sprite | null = null;
   private cueHandHintTexture: THREE.Texture | null = null;
@@ -350,7 +358,7 @@ export class ThreeSceneAdapter {
       this.scene.background = new THREE.Color(state.ambientColorHex);
     }
     this.tableGroup.visible = !hints.debugHideTableMesh;
-    this.applyCueStyle(state.opponentCueId);
+    this.applyCueStyle(state.activeCueId ?? state.opponentCueId);
     this.applyCamera(state.camera);
     this.syncWorldObjects(state.objects, dt);
     this.syncPolylines(state.polylines);
@@ -409,32 +417,18 @@ export class ThreeSceneAdapter {
 
   private applyCueStyle(cueId?: string): void {
     if (!this.cueShaft) return;
-    const shaftMat = this.cueShaft.material as THREE.MeshStandardMaterial;
-    let color = 0x6b4423;
-    switch (cueId) {
-      case 'street':
-        color = 0xb58b5a;
-        break;
-      case 'pro':
-        color = 0x5cf0c2;
-        break;
-      case 'neon':
-        color = 0xff6f91;
-        break;
-      case 'carbon':
-        color = 0x66b6ff;
-        break;
-      case 'legend':
-        color = 0xf4d35e;
-        break;
-      default:
-        color = 0x6b4423;
-        break;
-    }
-    if (shaftMat.color.getHex() !== color) {
-      shaftMat.color.setHex(color);
-      shaftMat.needsUpdate = true;
-    }
+    const id = cueId && CUE_STYLE_TABLE[cueId] ? cueId : 'classic';
+    if (this.cueAppliedStyleId === id) return;
+    this.cueAppliedStyleId = id;
+    const style = CUE_STYLE_TABLE[id]!;
+    applyMatPart(this.cueShaft, style.shaft);
+    applyMatPart(this.cueTip, style.tip);
+    applyMatPart(this.cueFerrule, style.ferrule);
+    applyMatPart(this.cueAccentRing, style.accent);
+    applyMatPart(this.cueWrap, style.wrap);
+    applyMatPart(this.cueButt, style.butt);
+    applyMatPart(this.cueButtCap, style.buttCap);
+    applyMatPart(this.cueButtRing, style.accent);
   }
 
   private applyCamera(cam: RenderWorldState['camera']): void {
@@ -949,27 +943,234 @@ export class ThreeSceneAdapter {
   }
 
   private buildCueStick(): void {
-    const len = 292;
+    /**
+     * Cue local axes: +Y points toward the cue ball (tip side), -Y is the butt.
+     * Total visual length stays ~292 (matches old cue) so aim/stroke geometry is unchanged.
+     */
+    const shaftLen = 292;
+    const shaftTopY = shaftLen * 0.5;
+    const shaftBotY = -shaftLen * 0.5;
+    const shaftTopR = 3.2;
+    const shaftBotR = 3.9;
+
     this.cueShaft = new THREE.Mesh(
-      new THREE.CylinderGeometry(3.2, 3.9, len, 14, 1),
-      new THREE.MeshStandardMaterial({
-        color: 0x6b4423,
-        roughness: 0.48,
-        metalness: 0.14,
-      }),
+      new THREE.CylinderGeometry(shaftTopR, shaftBotR, shaftLen, 18, 1),
+      new THREE.MeshStandardMaterial({ color: 0x6b4423, roughness: 0.48, metalness: 0.14 }),
     );
     this.cueShaft.castShadow = true;
     this.cueGroup.add(this.cueShaft);
-    const tip = new THREE.Mesh(
-      new THREE.CylinderGeometry(3.9, 3.1, 18, 12, 1),
-      new THREE.MeshStandardMaterial({ color: 0xc9b08e, roughness: 0.38, metalness: 0.1 }),
+
+    const ferruleH = 6;
+    this.cueFerrule = new THREE.Mesh(
+      new THREE.CylinderGeometry(shaftTopR + 0.05, shaftTopR + 0.1, ferruleH, 16, 1),
+      new THREE.MeshStandardMaterial({ color: 0xf3ece0, roughness: 0.55, metalness: 0.05 }),
     );
-    tip.position.y = len * 0.5 + 8;
-    tip.castShadow = true;
-    this.cueGroup.add(tip);
+    this.cueFerrule.position.y = shaftTopY + ferruleH * 0.5;
+    this.cueFerrule.castShadow = true;
+    this.cueGroup.add(this.cueFerrule);
+
+    const tipH = 14;
+    this.cueTip = new THREE.Mesh(
+      new THREE.CylinderGeometry(shaftTopR - 0.05, shaftTopR + 0.1, tipH, 16, 1),
+      new THREE.MeshStandardMaterial({ color: 0x4d6fa8, roughness: 0.7, metalness: 0.05 }),
+    );
+    this.cueTip.position.y = shaftTopY + ferruleH + tipH * 0.5;
+    this.cueTip.castShadow = true;
+    this.cueGroup.add(this.cueTip);
+
+    /** Decorative ring where the forearm meets the wrap (accent color). */
+    const accentRingH = 3.4;
+    const accentRingR = shaftBotR + 0.55;
+    this.cueAccentRing = new THREE.Mesh(
+      new THREE.CylinderGeometry(accentRingR, accentRingR, accentRingH, 22, 1),
+      new THREE.MeshStandardMaterial({ color: 0xf2c542, roughness: 0.32, metalness: 0.55 }),
+    );
+    this.cueAccentRing.position.y = shaftBotY + 38;
+    this.cueAccentRing.castShadow = true;
+    this.cueGroup.add(this.cueAccentRing);
+
+    /** Wrap (grip) — slightly thicker than shaft, sits below the accent ring. */
+    const wrapLen = 56;
+    const wrapR = shaftBotR + 0.35;
+    this.cueWrap = new THREE.Mesh(
+      new THREE.CylinderGeometry(wrapR, wrapR, wrapLen, 22, 1),
+      new THREE.MeshStandardMaterial({ color: 0x1d150e, roughness: 0.92, metalness: 0.04 }),
+    );
+    this.cueWrap.position.y = shaftBotY + 38 - accentRingH * 0.5 - wrapLen * 0.5;
+    this.cueWrap.castShadow = true;
+    this.cueGroup.add(this.cueWrap);
+
+    /** Butt sleeve — bottom 36 units, slightly wider, sits below the wrap. */
+    const buttLen = 36;
+    const buttRtop = shaftBotR + 0.15;
+    const buttRbot = shaftBotR + 0.6;
+    const buttTopY = this.cueWrap.position.y - wrapLen * 0.5;
+    this.cueButt = new THREE.Mesh(
+      new THREE.CylinderGeometry(buttRtop, buttRbot, buttLen, 22, 1),
+      new THREE.MeshStandardMaterial({ color: 0x3a2614, roughness: 0.55, metalness: 0.18 }),
+    );
+    this.cueButt.position.y = buttTopY - buttLen * 0.5;
+    this.cueButt.castShadow = true;
+    this.cueGroup.add(this.cueButt);
+
+    /** Thin accent ring at the bottom of the butt (decorative inlay). */
+    const buttRingH = 2.4;
+    this.cueButtRing = new THREE.Mesh(
+      new THREE.CylinderGeometry(buttRbot + 0.2, buttRbot + 0.2, buttRingH, 22, 1),
+      new THREE.MeshStandardMaterial({ color: 0xf2c542, roughness: 0.32, metalness: 0.55 }),
+    );
+    this.cueButtRing.position.y = this.cueButt.position.y - buttLen * 0.5 - buttRingH * 0.5;
+    this.cueButtRing.castShadow = true;
+    this.cueGroup.add(this.cueButtRing);
+
+    /** Rounded butt cap (rubber bumper). */
+    const buttCapR = buttRbot + 0.1;
+    this.cueButtCap = new THREE.Mesh(
+      new THREE.SphereGeometry(buttCapR, 18, 12, 0, Math.PI * 2, Math.PI * 0.5, Math.PI * 0.5),
+      new THREE.MeshStandardMaterial({ color: 0x141414, roughness: 0.78, metalness: 0.08 }),
+    );
+    this.cueButtCap.position.y = this.cueButtRing.position.y - buttRingH * 0.5;
+    this.cueButtCap.castShadow = true;
+    this.cueGroup.add(this.cueButtCap);
+
     this.attachCueHandHintSprite();
     this.cueGroup.visible = false;
+    this.applyCueStyle('classic');
   }
+}
+
+type CueMatPart = {
+  color: number;
+  roughness?: number;
+  metalness?: number;
+  emissive?: number;
+  emissiveIntensity?: number;
+};
+
+type CueStyle = {
+  shaft: CueMatPart;
+  tip: CueMatPart;
+  ferrule: CueMatPart;
+  accent: CueMatPart;
+  wrap: CueMatPart;
+  butt: CueMatPart;
+  buttCap: CueMatPart;
+};
+
+/**
+ * Per-cue visual style. Keys MUST match `SHOP_CUE_CATALOG` ids in `core/ShopCatalog.ts`
+ * so equipping a cue in the shop swaps the in-game stick instantly.
+ */
+const CUE_STYLE_TABLE: Record<string, CueStyle> = {
+  classic: {
+    shaft: { color: 0x8b5a2b, roughness: 0.55, metalness: 0.08 },
+    tip: { color: 0x4d6fa8, roughness: 0.7, metalness: 0.05 },
+    ferrule: { color: 0xf3ece0, roughness: 0.55, metalness: 0.05 },
+    accent: { color: 0xf2c542, roughness: 0.32, metalness: 0.55 },
+    wrap: { color: 0x1d150e, roughness: 0.92, metalness: 0.04 },
+    butt: { color: 0x3a2614, roughness: 0.55, metalness: 0.18 },
+    buttCap: { color: 0x141414, roughness: 0.78, metalness: 0.08 },
+  },
+  street: {
+    shaft: { color: 0xc8a273, roughness: 0.5, metalness: 0.1 },
+    tip: { color: 0x4d6fa8, roughness: 0.7, metalness: 0.05 },
+    ferrule: { color: 0xf3ece0, roughness: 0.55, metalness: 0.05 },
+    accent: { color: 0xc08750, roughness: 0.4, metalness: 0.45 },
+    wrap: { color: 0x4a3a2a, roughness: 0.88, metalness: 0.05 },
+    butt: { color: 0x6b4423, roughness: 0.5, metalness: 0.16 },
+    buttCap: { color: 0x141414, roughness: 0.78, metalness: 0.08 },
+  },
+  pro: {
+    shaft: { color: 0xe8efe9, roughness: 0.34, metalness: 0.22 },
+    tip: { color: 0x3f6a98, roughness: 0.68, metalness: 0.08 },
+    ferrule: { color: 0xfafafa, roughness: 0.4, metalness: 0.18 },
+    accent: {
+      color: 0x5cf0c2,
+      roughness: 0.28,
+      metalness: 0.55,
+      emissive: 0x1f6f5b,
+      emissiveIntensity: 0.35,
+    },
+    wrap: { color: 0x223533, roughness: 0.7, metalness: 0.18 },
+    butt: { color: 0x2c4d44, roughness: 0.4, metalness: 0.34 },
+    buttCap: { color: 0x0d1614, roughness: 0.6, metalness: 0.18 },
+  },
+  neon: {
+    shaft: {
+      color: 0xff6f91,
+      roughness: 0.32,
+      metalness: 0.22,
+      emissive: 0xff2e6a,
+      emissiveIntensity: 0.45,
+    },
+    tip: { color: 0x3a2230, roughness: 0.7, metalness: 0.08 },
+    ferrule: { color: 0xfff2f7, roughness: 0.4, metalness: 0.2 },
+    accent: {
+      color: 0xff9ec5,
+      roughness: 0.22,
+      metalness: 0.55,
+      emissive: 0xff3d72,
+      emissiveIntensity: 0.95,
+    },
+    wrap: { color: 0x1a0e16, roughness: 0.6, metalness: 0.2 },
+    butt: {
+      color: 0xff3d72,
+      roughness: 0.34,
+      metalness: 0.28,
+      emissive: 0xff1858,
+      emissiveIntensity: 0.45,
+    },
+    buttCap: { color: 0x0a0408, roughness: 0.55, metalness: 0.22 },
+  },
+  carbon: {
+    shaft: { color: 0x1c2230, roughness: 0.26, metalness: 0.78 },
+    tip: { color: 0x4d6fa8, roughness: 0.7, metalness: 0.05 },
+    ferrule: { color: 0xc9d3e1, roughness: 0.32, metalness: 0.6 },
+    accent: {
+      color: 0x66b6ff,
+      roughness: 0.24,
+      metalness: 0.7,
+      emissive: 0x1f6fbf,
+      emissiveIntensity: 0.55,
+    },
+    wrap: { color: 0x0d1018, roughness: 0.5, metalness: 0.55 },
+    butt: { color: 0x2a2f40, roughness: 0.3, metalness: 0.74 },
+    buttCap: { color: 0x05070c, roughness: 0.4, metalness: 0.6 },
+  },
+  legend: {
+    shaft: { color: 0xe7c46b, roughness: 0.34, metalness: 0.62 },
+    tip: { color: 0x4d6fa8, roughness: 0.7, metalness: 0.05 },
+    ferrule: { color: 0xfff5d6, roughness: 0.36, metalness: 0.5 },
+    accent: {
+      color: 0xfff0a3,
+      roughness: 0.22,
+      metalness: 0.85,
+      emissive: 0xb98a18,
+      emissiveIntensity: 0.5,
+    },
+    wrap: { color: 0x2c1f0a, roughness: 0.7, metalness: 0.32 },
+    butt: { color: 0x8a6328, roughness: 0.36, metalness: 0.65 },
+    buttCap: { color: 0x1a1208, roughness: 0.55, metalness: 0.4 },
+  },
+};
+
+function applyMatPart(mesh: THREE.Mesh | undefined, part: CueMatPart): void {
+  if (!mesh) return;
+  const mat = mesh.material as THREE.MeshStandardMaterial;
+  if (mat.color.getHex() !== part.color) {
+    mat.color.setHex(part.color);
+  }
+  if (part.roughness != null) mat.roughness = part.roughness;
+  if (part.metalness != null) mat.metalness = part.metalness;
+  /** Drop emissive cleanly when the new style omits it (e.g. neon → classic). */
+  if (part.emissive != null) {
+    mat.emissive.setHex(part.emissive);
+    mat.emissiveIntensity = part.emissiveIntensity ?? 1;
+  } else {
+    mat.emissive.setHex(0x000000);
+    mat.emissiveIntensity = 0;
+  }
+  mat.needsUpdate = true;
 }
 
 function configureBallDiffuseMap(tex: THREE.Texture): void {

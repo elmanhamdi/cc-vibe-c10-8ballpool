@@ -40,6 +40,13 @@ body {
     0 24px 80px rgba(0, 0, 0, 0.65);
   overflow: hidden;
   /**
+   * Establishes a CSS container so HUD descendants can size with `cqw`
+   * (1cqw = 1% of #game-root inline-size) — keeps phone & desktop in sync
+   * regardless of viewport width.
+   */
+  container-type: inline-size;
+  container-name: gameroot;
+  /**
    * Canvas üst boşluğu ile HUD bandı aynı değişken — arada düz #0b0f14 şeridi kalmasın.
    */
   /* Fallback until HUD measures itself; overridden inline to match .hud-top-stack height. */
@@ -294,11 +301,11 @@ body {
 .hud-top-stack {
   position: absolute;
   top: 0;
-  left: 8px;
-  right: 8px;
+  left: clamp(4px, 1.6cqw, 8px);
+  right: clamp(4px, 1.6cqw, 8px);
   z-index: 3;
   box-sizing: border-box;
-  padding: 6px 8px 8px;
+  padding: clamp(4px, 1.4cqw, 6px) clamp(6px, 2cqw, 8px) clamp(6px, 2cqw, 8px);
   display: none;
   flex-direction: column;
   justify-content: flex-start;
@@ -316,8 +323,8 @@ body {
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  padding: 8px 6px 10px;
+  gap: clamp(3px, 1.2cqw, 5px);
+  padding: clamp(6px, 2.2cqw, 8px) clamp(4px, 1.6cqw, 6px) clamp(7px, 2.4cqw, 10px);
   border-radius: 14px;
   background: linear-gradient(180deg, rgba(14, 32, 64, 0.9), rgba(10, 24, 52, 0.48));
   backdrop-filter: blur(8px);
@@ -325,17 +332,17 @@ body {
 
 .hud-top-main {
   display: grid;
-  grid-template-columns: minmax(0, 2.6fr) minmax(48px, 0.75fr) minmax(0, 2.6fr);
+  grid-template-columns: minmax(0, 2.6fr) minmax(clamp(40px, 11cqw, 48px), 0.75fr) minmax(0, 2.6fr);
   align-items: center;
-  gap: 6px;
+  gap: clamp(4px, 1.6cqw, 6px);
   min-width: 0;
 }
 
 .hud-top-pots {
   display: grid;
-  grid-template-columns: minmax(0, 2.6fr) minmax(48px, 0.75fr) minmax(0, 2.6fr);
+  grid-template-columns: minmax(0, 2.6fr) minmax(clamp(40px, 11cqw, 48px), 0.75fr) minmax(0, 2.6fr);
   align-items: start;
-  gap: 4px 6px;
+  gap: clamp(3px, 1.2cqw, 4px) clamp(4px, 1.6cqw, 6px);
   min-width: 0;
 }
 
@@ -360,7 +367,7 @@ body {
 .hud-side {
   display: flex;
   align-items: flex-start;
-  gap: 4px;
+  gap: clamp(3px, 1.2cqw, 4px);
   min-width: 0;
 }
 
@@ -391,7 +398,7 @@ body {
   display: flex;
   flex-direction: row;
   align-items: center;
-  gap: 10px;
+  gap: clamp(6px, 2.4cqw, 10px);
   min-width: 0;
 }
 
@@ -422,11 +429,11 @@ body {
 
 /* Square avatar + shot-clock ring (conic border on active player) */
 .avatar-frame {
-  width: 88px;
-  height: 88px;
+  width: clamp(52px, 17cqw, 88px);
+  height: clamp(52px, 17cqw, 88px);
   flex-shrink: 0;
-  padding: 6px;
-  border-radius: 24px;
+  padding: clamp(3px, 1.2cqw, 6px);
+  border-radius: clamp(14px, 5.5cqw, 24px);
   box-sizing: border-box;
   background: rgba(88, 96, 112, 0.55);
   transform: scale(1);
@@ -457,7 +464,7 @@ body {
 .avatar-inner {
   width: 100%;
   height: 100%;
-  border-radius: 18px;
+  border-radius: clamp(10px, 4cqw, 18px);
   overflow: hidden;
   background: #141a24;
 }
@@ -472,7 +479,7 @@ body {
 .side-line {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: clamp(2px, 1.2cqw, 4px);
   min-width: 0;
 }
 
@@ -497,11 +504,11 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 22px;
-  height: 20px;
-  padding: 0 5px;
+  min-width: clamp(18px, 5.4cqw, 22px);
+  height: clamp(16px, 4.8cqw, 20px);
+  padding: 0 clamp(3px, 1.4cqw, 5px);
   border-radius: 5px;
-  font-size: 11px;
+  font-size: clamp(9px, 2.8cqw, 11px);
   font-weight: 800;
   letter-spacing: -0.02em;
   color: #04120d;
@@ -536,16 +543,16 @@ body {
 
 .side-name {
   font-weight: 750;
-  font-size: 14px;
+  font-size: clamp(11px, 3.4cqw, 14px);
   line-height: 1.15;
-  max-width: 28vw;
+  max-width: clamp(70px, 26cqw, 180px);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .side-meta {
-  font-size: 10px;
+  font-size: clamp(9px, 2.6cqw, 10px);
   opacity: 0.75;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -555,16 +562,16 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  min-width: 54px;
+  gap: clamp(4px, 1.6cqw, 6px);
+  min-width: clamp(40px, 12cqw, 54px);
   padding-top: 2px;
   flex-shrink: 0;
 }
 
 .hud-reward {
-  font-size: 11px;
+  font-size: clamp(9px, 2.8cqw, 11px);
   opacity: 0.8;
-  padding: 3px 8px;
+  padding: 3px clamp(5px, 2cqw, 8px);
   border-radius: 10px;
   background: rgba(40, 44, 52, 0.72);
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -582,12 +589,12 @@ body {
 }
 
 .cue-mini.cue-spin-main {
-  width: 54px;
-  height: 54px;
+  width: clamp(40px, 12.5cqw, 54px);
+  height: clamp(40px, 12.5cqw, 54px);
 }
 
 .pot-label {
-  font-size: 10px;
+  font-size: clamp(9px, 2.6cqw, 10px);
   opacity: 0.65;
   text-transform: none;
   letter-spacing: 0.02em;
@@ -599,11 +606,11 @@ body {
 .pot-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 3px;
+  gap: clamp(2px, 0.9cqw, 3px);
   align-items: center;
   justify-content: flex-start;
   width: 100%;
-  min-height: 22px;
+  min-height: clamp(18px, 5.4cqw, 22px);
   max-width: 100%;
   box-sizing: border-box;
   overflow: visible;
@@ -617,10 +624,10 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: clamp(16px, 4.8cqw, 20px);
+  height: clamp(16px, 4.8cqw, 20px);
   border-radius: 999px;
-  font-size: 9px;
+  font-size: clamp(8px, 2.4cqw, 9px);
   font-weight: 800;
   color: #0a0a0a;
   border: 1px solid rgba(0, 0, 0, 0.25);
@@ -630,8 +637,8 @@ body {
 
 .pot-slot {
   display: inline-flex;
-  width: 20px;
-  height: 20px;
+  width: clamp(16px, 4.8cqw, 20px);
+  height: clamp(16px, 4.8cqw, 20px);
   border-radius: 999px;
   flex-shrink: 0;
   background: rgba(120, 128, 142, 0.28);
@@ -648,8 +655,8 @@ body {
 }
 
 .pot-slot-img {
-  width: 20px;
-  height: 20px;
+  width: clamp(16px, 4.8cqw, 20px);
+  height: clamp(16px, 4.8cqw, 20px);
   object-fit: contain;
   display: block;
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35));

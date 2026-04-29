@@ -1,5 +1,7 @@
 import './styles.css';
 import { GameEngine } from './core/GameEngine.js';
+import { Table } from './physics/Table.js';
+import { resolveTableLayoutFromBrowser } from './platform-browser/tableLayoutFromUrl.js';
 import type { GameInputCommand } from './core/gameContract.js';
 import { ThreeSceneAdapter } from './render-three/ThreeSceneAdapter.js';
 import { BrowserHudAdapter } from './platform-browser/BrowserHudAdapter.js';
@@ -8,19 +10,23 @@ import { applyCanvasResize } from './platform-browser/BrowserResize.js';
 import { PhysicsDebugToggle } from './platform-browser/PhysicsDebugToggle.js';
 import { CameraDebugToggle } from './platform-browser/CameraDebugToggle.js';
 import { TableMeshDebugToggle } from './platform-browser/TableMeshDebugToggle.js';
+import { OpponentShotCameraToggle } from './platform-browser/OpponentShotCameraToggle.js';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game-canvas')!;
 const hudLayer = document.querySelector<HTMLElement>('#hud-layer')!;
 const gameRoot = document.querySelector<HTMLElement>('#game-root')!;
 
 const commandBuffer: GameInputCommand[] = [];
-const engine = new GameEngine();
+const tableLayout = resolveTableLayoutFromBrowser();
+const sharedTable = new Table(tableLayout);
+const engine = new GameEngine({ table: sharedTable, ballRadius: 9 });
 const assetBaseUrl = import.meta.env.BASE_URL;
-const sceneAdapter = new ThreeSceneAdapter(canvas, { assetBaseUrl });
+const sceneAdapter = new ThreeSceneAdapter(canvas, { assetBaseUrl, physicsTable: sharedTable });
 const audioAdapter = new BrowserAudioAdapter({ assetBaseUrl });
 const physicsDebug = new PhysicsDebugToggle();
 const cameraDebug = new CameraDebugToggle(gameRoot);
 const tableMeshDebug = new TableMeshDebugToggle();
+const opponentShotCameraDebug = new OpponentShotCameraToggle();
 
 const hudAdapter = new BrowserHudAdapter(
   hudLayer,
@@ -28,9 +34,21 @@ const hudAdapter = new BrowserHudAdapter(
   (c) => {
     commandBuffer.push(c);
   },
-  { assetBaseUrl },
+  {
+    assetBaseUrl,
+    toggleSound: () => audioAdapter.toggleMute(),
+    isSoundMuted: () => audioAdapter.isMuted(),
+  },
 );
 hudAdapter.bind();
+
+window.addEventListener(
+  'pointerdown',
+  () => {
+    audioAdapter.resumeBackgroundMusicIfNeeded();
+  },
+  { once: true, capture: true },
+);
 
 function resize(): void {
   const rect = canvas.getBoundingClientRect();
@@ -52,6 +70,7 @@ function renderHints() {
   return {
     physicsDebugVisible: physicsDebug.get(),
     debugHideTableMesh: tableMeshDebug.get(),
+    debugOpponentShotCamera: opponentShotCameraDebug.get(),
   };
 }
 
@@ -100,6 +119,7 @@ const loop = (now: number) => {
   last = now;
   const cmds = commandBuffer.splice(0, commandBuffer.length);
   engine.update(dt, cmds);
+  canvas.style.cursor = engine.isAwaitingPlayerBallInHand() ? 'grab' : 'auto';
   const hints = renderHints();
   const rw = engine.getRenderWorldState(
     { widthPx: canvas.width, heightPx: canvas.height },
@@ -108,15 +128,26 @@ const loop = (now: number) => {
   sceneAdapter.render(rw, dt, hints);
   hudAdapter.sync();
   if (cameraDebug.get()) {
-    const d = engine.getOpponentCameraDebug({ widthPx: canvas.width, heightPx: canvas.height });
+    const d = engine.getOpponentCameraDebug(
+      { widthPx: canvas.width, heightPx: canvas.height },
+      hints,
+    );
     if (d.useOpponentFraming) {
       cameraDebug.setLines([
+        ...(hints.debugOpponentShotCamera ? ['O — sinematik kadraj önizleme'] : []),
         'Rakip vuruşu — kamera (F kapat)',
         `polar ${d.finalPolarDeg.toFixed(1)}°`,
         `azimuth ${d.finalAzimuthDeg.toFixed(1)}°`,
       ]);
+    } else if (hints.debugOpponentShotCamera) {
+      cameraDebug.setLines([
+        'O açık — sinematik rakip kadrajı (O kapat)',
+        `polar ${d.finalPolarDeg.toFixed(1)}°`,
+        `azimuth ${d.finalAzimuthDeg.toFixed(1)}°`,
+        `blend ${d.cinematicBlend.toFixed(2)}`,
+      ]);
     } else {
-      cameraDebug.setLines(['F açık — rakip sırasında polar/azimuth gösterilir']);
+      cameraDebug.setLines(['F açık — rakip sırasında polar/azimuth; O ile kadraj önizle']);
     }
   }
   audioAdapter.consume(engine.drainEvents());

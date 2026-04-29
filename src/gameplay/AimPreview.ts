@@ -1,4 +1,5 @@
 import type { Ball } from '../physics/Ball.js';
+import type { RulesContext } from './rules.types.js';
 
 /** Line segments in the 2D table plane (physics x,y). */
 export interface Segment2D {
@@ -24,9 +25,14 @@ const GHOST_CUE = 155;
 
 /**
  * Ray–circle hit: C + t d, t>0, |P−O| = R (R = sum of ball radii).
- * TODO: On open table, first geometric hit vs first legal ball by rules (MVP uses ray hit).
+ * Open table: skips the 8 when solids/stripes remain (Miniclip-style first-hit rule).
  */
-export function computeAimPreview(balls: Ball[], cue: Ball, aimAngle: number): AimPreviewResult {
+export function computeAimPreview(
+  balls: Ball[],
+  cue: Ball,
+  aimAngle: number,
+  rules?: Pick<RulesContext, 'openTable'>,
+): AimPreviewResult {
   const dx = Math.cos(aimAngle);
   const dy = Math.sin(aimAngle);
   const cx = cue.pos.x;
@@ -36,8 +42,13 @@ export function computeAimPreview(balls: Ball[], cue: Ball, aimAngle: number): A
   let bestT = MAX_RAY;
   let target: Ball | null = null;
 
+  const skipEightWhileOpen =
+    rules?.openTable &&
+    balls.some((x) => x.active && (x.kind === 'solid' || x.kind === 'stripe'));
+
   for (const b of balls) {
     if (!b.active || b.id === cue.id) continue;
+    if (skipEightWhileOpen && b.kind === 'eight') continue;
     const sumR = rc + b.radius;
     const t = rayCircleFirstHit(cx, cy, dx, dy, b.pos.x, b.pos.y, sumR);
     if (t != null && t > 1e-3 && t < bestT) {

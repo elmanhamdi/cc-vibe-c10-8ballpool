@@ -144,9 +144,9 @@ body {
   align-items: stretch;
   background: linear-gradient(
     180deg,
-    rgba(8, 12, 22, 0.97) 0%,
-    rgba(6, 10, 16, 0.78) 55%,
-    rgba(6, 10, 16, 0.5) 100%
+    rgba(18, 36, 72, 0.97) 0%,
+    rgba(12, 28, 58, 0.82) 55%,
+    rgba(8, 20, 46, 0.52) 100%
   );
   border-radius: 0 0 16px 16px;
 }
@@ -158,7 +158,7 @@ body {
   gap: 5px;
   padding: 8px 6px 10px;
   border-radius: 14px;
-  background: linear-gradient(180deg, rgba(6, 10, 16, 0.88), rgba(6, 10, 16, 0.42));
+  background: linear-gradient(180deg, rgba(14, 32, 64, 0.9), rgba(10, 24, 52, 0.48));
   backdrop-filter: blur(8px);
 }
 
@@ -261,11 +261,11 @@ body {
 
 /* Square avatar + shot-clock ring (conic border on active player) */
 .avatar-frame {
-  width: 44px;
-  height: 44px;
+  width: 88px;
+  height: 88px;
   flex-shrink: 0;
-  padding: 3px;
-  border-radius: 12px;
+  padding: 6px;
+  border-radius: 24px;
   box-sizing: border-box;
   background: rgba(88, 96, 112, 0.55);
   transform: scale(1);
@@ -295,7 +295,7 @@ body {
 .avatar-inner {
   width: 100%;
   height: 100%;
-  border-radius: 9px;
+  border-radius: 18px;
   overflow: hidden;
   background: #141a24;
 }
@@ -397,6 +397,7 @@ body {
   letter-spacing: 0.02em;
   margin-bottom: 3px;
   line-height: 1.2;
+  white-space: pre;
 }
 
 .pot-chips {
@@ -442,20 +443,20 @@ body {
   box-sizing: border-box;
 }
 
-.pot-eight-due {
-  display: inline-flex;
+.pot-slot.pot-slot--icon {
   align-items: center;
   justify-content: center;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.pot-slot-img {
   width: 20px;
   height: 20px;
-  border-radius: 999px;
-  flex-shrink: 0;
-  font-size: 9px;
-  font-weight: 800;
-  color: rgba(232, 238, 247, 0.88);
-  background: rgba(40, 44, 52, 0.95);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  box-sizing: border-box;
+  object-fit: contain;
+  display: block;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35));
 }
 
 /* Opponent reaction: portrait above, line below; horizontal cross-in/out + opacity. */
@@ -480,7 +481,8 @@ body {
 }
 
 .opp-reaction-stage {
-  --opp-react-dur: 5.8s;
+  /* Toplam ≈ TTL; %25–%75 = tam %50 süre = 1s hold (2s varsayılan). */
+  --opp-react-dur: 2s;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -540,28 +542,32 @@ body {
   text-align: center;
 }
 
-/* Motion: ease-heavy middle so the pair “settles” at center before continuing. */
+/* Giriş/çıkış ~aynı hız hissi; ortada 1s translateX(0) platosu (toplam 2s → %25–%75). */
 @keyframes opp-react-portrait-cross {
   0% {
     transform: translateX(calc(-1 * (50vw + 40%)));
     opacity: 0;
   }
-  11% {
+  5% {
     opacity: 1;
   }
-  36% {
+  18% {
     transform: translateX(-12px);
     opacity: 1;
   }
-  50% {
+  25% {
     transform: translateX(0);
     opacity: 1;
   }
-  64% {
+  75% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  82% {
     transform: translateX(12px);
     opacity: 1;
   }
-  86% {
+  93% {
     opacity: 0.2;
   }
   100% {
@@ -575,22 +581,26 @@ body {
     transform: translateX(calc(50vw + 40%));
     opacity: 0;
   }
-  11% {
+  5% {
     opacity: 1;
   }
-  36% {
+  18% {
     transform: translateX(12px);
     opacity: 1;
   }
-  50% {
+  25% {
     transform: translateX(0);
     opacity: 1;
   }
-  64% {
+  75% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  82% {
     transform: translateX(-12px);
     opacity: 1;
   }
-  86% {
+  93% {
     opacity: 0.2;
   }
   100% {
@@ -601,12 +611,12 @@ body {
 
 .opp-reaction-stage.opp-react-anim .opp-reaction-portrait-wrap {
   visibility: visible;
-  animation: opp-react-portrait-cross var(--opp-react-dur, 5.8s) cubic-bezier(0.34, 0.02, 0.22, 1) both;
+  animation: opp-react-portrait-cross var(--opp-react-dur, 2s) cubic-bezier(0.34, 0.02, 0.22, 1) both;
 }
 
 .opp-reaction-stage.opp-react-anim .opp-reaction-text-wrap {
   visibility: visible;
-  animation: opp-react-text-cross var(--opp-react-dur, 5.8s) cubic-bezier(0.34, 0.02, 0.22, 1) both;
+  animation: opp-react-text-cross var(--opp-react-dur, 2s) cubic-bezier(0.34, 0.02, 0.22, 1) both;
 }
 
 @keyframes opp-react-fade-only {
@@ -614,10 +624,10 @@ body {
     opacity: 0;
     transform: none;
   }
-  14% {
+  10% {
     opacity: 1;
   }
-  52% {
+  75% {
     opacity: 1;
   }
   100% {
@@ -629,7 +639,7 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .opp-reaction-stage.opp-react-anim .opp-reaction-portrait-wrap,
   .opp-reaction-stage.opp-react-anim .opp-reaction-text-wrap {
-    animation: opp-react-fade-only var(--opp-react-dur, 5.8s) ease both;
+    animation: opp-react-fade-only var(--opp-react-dur, 2s) ease both;
   }
 }
 
@@ -729,6 +739,38 @@ body {
 .cue-spin-main .spin-dot {
   width: 13px;
   height: 13px;
+}
+
+.hud-sound-btn {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  width: 54px;
+  height: 54px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  background: rgba(8, 12, 20, 0.66);
+  backdrop-filter: blur(4px);
+  cursor: pointer;
+  z-index: 6;
+}
+
+.hud-sound-btn:hover {
+  background: rgba(12, 16, 26, 0.78);
+}
+
+.hud-sound-btn:active {
+  transform: scale(0.96);
+}
+
+.hud-sound-btn-icon {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
 }
 
 /* F — opponent camera debug (see CameraDebugToggle) */

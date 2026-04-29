@@ -24,6 +24,8 @@ export interface RenderRuntimeHints {
   physicsDebugVisible: boolean;
   /** Dev: `TableMeshDebugToggle` (T) — masa 3D grubunu gizle. */
   debugHideTableMesh: boolean;
+  /** Dev: `OpponentShotCameraToggle` (O) — rakip sinematik vuruş kadrajını önizle. */
+  debugOpponentShotCamera: boolean;
 }
 
 export interface Game {

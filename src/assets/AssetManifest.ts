@@ -151,6 +151,63 @@ export const AssetManifest = {
     sourceFormat: 'ogg',
     notes: 'Ball–ball contact; counted in CollisionSystem, sounds from GameEngine.',
   },
+  'sound.ui.bgMatch2': {
+    id: 'sound.ui.bgMatch2',
+    kind: 'audio',
+    browserUrl: 'audio/bg_2.ogg',
+    futureMhsPath: '@Assets/Audio/BgMatch2',
+    sourceFormat: 'ogg',
+    notes: 'Looping in-match BGM (50% vs bg_3 per match).',
+  },
+  'sound.ui.bgMatch3': {
+    id: 'sound.ui.bgMatch3',
+    kind: 'audio',
+    browserUrl: 'audio/bg_3.ogg',
+    futureMhsPath: '@Assets/Audio/BgMatch3',
+    sourceFormat: 'ogg',
+    notes: 'Looping in-match BGM (50% vs bg_2 per match).',
+  },
+  'sound.ui.bgBetweenGames': {
+    id: 'sound.ui.bgBetweenGames',
+    kind: 'audio',
+    browserUrl: 'audio/bg_betweengames.ogg',
+    futureMhsPath: '@Assets/Audio/BgBetweenGames',
+    sourceFormat: 'ogg',
+    notes: 'Looping between matches (MatchEnd overlay).',
+  },
+  'sound.ui.turnBell': {
+    id: 'sound.ui.turnBell',
+    kind: 'audio',
+    browserUrl: 'audio/bell.wav',
+    futureMhsPath: '@Assets/Audio/TurnBell',
+    sourceFormat: 'wav',
+    notes: 'Played when turn passes to the other player.',
+  },
+
+  'sound.opponent.tung.taunt1': {
+    id: 'sound.opponent.tung.taunt1',
+    kind: 'audio',
+    browserUrl: 'opponents/tung/audio/tung1.ogg',
+    futureMhsPath: '@Assets/Audio/TungTaunt1',
+    sourceFormat: 'ogg',
+    notes: 'Tung voice line; played when Tung dialogue line is chosen.',
+  },
+  'sound.opponent.tung.taunt2': {
+    id: 'sound.opponent.tung.taunt2',
+    kind: 'audio',
+    browserUrl: 'opponents/tung/audio/tung2.ogg',
+    futureMhsPath: '@Assets/Audio/TungTaunt2',
+    sourceFormat: 'ogg',
+    notes: 'Tung voice line; played when Tung dialogue line is chosen.',
+  },
+  'sound.opponent.tung.taunt3': {
+    id: 'sound.opponent.tung.taunt3',
+    kind: 'audio',
+    browserUrl: 'opponents/tung/audio/tung3.ogg',
+    futureMhsPath: '@Assets/Audio/TungTaunt3',
+    sourceFormat: 'ogg',
+    notes: 'Tung voice line; played when Tung dialogue line is chosen.',
+  },
 } as const satisfies Record<string, AssetManifestEntry>;
 
 export type AssetManifestKey = keyof typeof AssetManifest;

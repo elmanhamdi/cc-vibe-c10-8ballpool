@@ -80,6 +80,10 @@ export interface RenderWorldState {
   polylines: readonly PolylineObjectState[];
   tableSpace: TableSpaceMeta;
   ambientColorHex?: string;
+  /** İsteka üzerinde “çek–vur” el animasyonu — yalnızca ilk break / açılış sahnesi. */
+  cuePullHandHint?: boolean;
+  /** Oyuncu beyazı sürükleyerek yerleştirirken el ikonu + tarayıcı imleci. */
+  cueBallInHandCursorHint?: boolean;
 }
 
 export type PotHudState =

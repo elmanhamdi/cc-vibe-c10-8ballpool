@@ -30,11 +30,14 @@ import { AssetIds } from '../assets/AssetIds.js';
 import {
   AI_CAMERA_BLEND_EXP,
   AI_CAMERA_BLEND_EXP_RETURN,
+  OPENING_BREAK_CAMERA_BLEND_RETURN_EXP,
   AI_CAMERA_CINEMATIC_CHANCE,
   AI_CAMERA_OPPONENT_YAW_OFFSET_RAD,
   AI_CAMERA_PRESET,
   AI_CAMERA_PRESET_A_AZIMUTH_RAD,
   AI_CAMERA_PRESET_A_POLAR_RAD,
+  AI_CAMERA_OPENING_BREAK_LOOK_AT_Z_SCALE,
+  AI_CAMERA_OPENING_BREAK_Y_OFFSET,
   AI_CAMERA_PRESET_B_AZIMUTH_RAD,
   AI_CAMERA_PRESET_B_POLAR_RAD,
   CAMERA_FAR,
@@ -43,10 +46,16 @@ import {
   CAMERA_PLAYER_AZIMUTH_RAD,
   CAMERA_PLAYER_POLAR_RAD,
   CAMERA_TABLE_DISTANCE_SCALE,
+  OPPONENT_REACTION_TTL_MIN_SEC,
+  OPPONENT_REACTION_TTL_RANDOM_SEC,
+  OPPONENT_TUNG_PLACEHOLDER_OFFSET_X,
+  OPPONENT_TUNG_PLACEHOLDER_PAST_RAIL_Z,
+  OPPONENT_TUNG_WORLD_Y_OFFSET,
 } from './Constants.js';
 import { PoolInputState } from './PoolInputState.js';
 import { transformAt, uniformScale, vec3 } from '../world/Transform.js';
 import type { BallKind } from '../physics/Ball.js';
+import { Vec2 } from '../physics/Vec2.js';
 
 /** Shortest-path lerp on the circle (radians). */
 function lerpAngleRad(from: number, to: number, t: number): number {
@@ -58,9 +67,14 @@ function lerpAngleRad(from: number, to: number, t: number): number {
 
 export type { PotHudState } from '../world/renderTypes.js';
 
+export type GameEngineOptions = {
+  table?: Table;
+  ballRadius?: number;
+};
+
 export class GameEngine implements Game {
   phase: GamePhase = 'MainMenu';
-  readonly table = new Table();
+  readonly table: Table;
   readonly physics: CollisionSystem;
   readonly rulesCtx: RulesContext = {
     openTable: true,
@@ -90,6 +104,25 @@ export class GameEngine implements Game {
   /** 0 = player kadrajı, 1 = tam AI alternatif kadrajı; üstel yumuşatma. */
   private aiCameraBlend = 0;
   private aiCameraBlendTarget = 0;
+  /** İlk break öncesi oyuncu turunda kamera preset A (açılış) kadrajında; bir kez biter. */
+  private awaitingFirstPlayerBreakShot = true;
+  /** True for the ball simulation that follows the opening break stroke (illegal-break rules). */
+  private activeShotIsOpeningBreak = false;
+  /** İlk oyuncu vuruşunda blend 1→0 ile üst kadraja yumuşak dönüş (lookAt/Y offset dahil). */
+  private openingShotCameraReturnActive = false;
+  /** Rakibin bu maçtaki ilk vuruşunda sinematik kadraj (blend→1) uygulanmaz. */
+  private awaitingFirstAiShot = true;
+  /** Rakip faul etti; oyuncu beyazı sürükleyerek yerleştirecek (isteka gizli). */
+  private awaitingBallInHandPlacement = false;
+  private ballInHandDragging = false;
+  /** AI beyazı taşırken görsel kaydırma (fizik `cue.pos` lerp). */
+  private aiCueBallPlacementSlide: {
+    fromX: number;
+    fromY: number;
+    toX: number;
+    toY: number;
+    t: number;
+  } | null = null;
 
   /** Center “reaction portrait” moment (TTL); cleared with match / dialogue tick cadence. */
   private opponentReaction: {
@@ -104,7 +137,9 @@ export class GameEngine implements Game {
   readonly poolInput = new PoolInputState();
   private readonly eventQueue: GameEvent[] = [];
 
-  constructor(ballRadius = 9) {
+  constructor(options?: GameEngineOptions) {
+    const ballRadius = options?.ballRadius ?? 9;
+    this.table = options?.table ?? new Table();
     this.physics = new CollisionSystem(this.table, ballRadius);
     this.ai = new AIController(CAREER_OPPONENTS[0]!);
     this.beginCareer(0);
@@ -123,6 +158,19 @@ export class GameEngine implements Game {
 
   private pushSound(soundId: string, volume?: number): void {
     this.eventQueue.push({ type: 'sound', soundId, volume });
+  }
+
+  private pushMusicStart(musicId: string): void {
+    this.eventQueue.push({ type: 'music', musicId, action: 'start' });
+  }
+
+  private pickRandomMatchBgmId(): string {
+    return Math.random() < 0.5 ? AssetIds.musicBgMatch2 : AssetIds.musicBgMatch3;
+  }
+
+  /** Oyuncu beyaz yerleştirirken canvas `cursor` için (main loop). */
+  isAwaitingPlayerBallInHand(): boolean {
+    return this.awaitingBallInHandPlacement && this.phase === 'PlayerTurn' && this.physics.cue.active;
   }
 
   getOpponent(): AICharacterProfile {
@@ -160,8 +208,16 @@ export class GameEngine implements Game {
     this.lastMatchWon = null;
     this.poolInput.resetStroke();
     this.poolInput.aimDragging = false;
+    this.awaitingFirstPlayerBreakShot = true;
+    this.awaitingFirstAiShot = true;
+    this.awaitingBallInHandPlacement = false;
+    this.ballInHandDragging = false;
+    this.aiCueBallPlacementSlide = null;
+    this.activeShotIsOpeningBreak = false;
+    this.openingShotCameraReturnActive = false;
     this.aiCameraBlend = 0;
     this.aiCameraBlendTarget = 0;
+    this.pushMusicStart(this.pickRandomMatchBgmId());
   }
 
   /** After a win, advance the ladder. */
@@ -172,6 +228,13 @@ export class GameEngine implements Game {
   private requestPlayerShot(angle: number, power01: number, spinX: number, spinY: number): boolean {
     if (this.phase !== 'PlayerTurn') return false;
     if (!this.physics.cue.active) return false;
+    this.activeShotIsOpeningBreak = this.awaitingFirstPlayerBreakShot;
+    if (this.awaitingFirstPlayerBreakShot) {
+      this.awaitingFirstPlayerBreakShot = false;
+      this.aiCameraBlend = 1;
+      this.aiCameraBlendTarget = 0;
+      this.openingShotCameraReturnActive = true;
+    }
     this.physics.applyShot(angle, power01, spinX, spinY);
     this.physics.beginShot();
     this.pushSound(AssetIds.soundCueStrike, 0.55);
@@ -190,6 +253,8 @@ export class GameEngine implements Game {
         rules: this.rulesCtx,
       });
     this.pendingAI = null;
+    this.activeShotIsOpeningBreak = false;
+    if (this.awaitingFirstAiShot) this.awaitingFirstAiShot = false;
     this.physics.applyShot(plan.angle, plan.power01, plan.spinX, plan.spinY);
     this.physics.beginShot();
     this.pushSound(AssetIds.soundCueStrike, 0.55);
@@ -200,8 +265,11 @@ export class GameEngine implements Game {
   update(dt: number, commands: readonly GameInputCommand[] = []): void {
     this.applyMenuCommands(commands);
 
-    this.poolInput.applyCommands(commands, {
-      phaseIsPlayerTurn: this.phase === 'PlayerTurn' && !this.opponentReaction,
+    const commandsForPool = this.filterBallInHandPointerCommands(commands);
+
+    this.poolInput.applyCommands(commandsForPool, {
+      phaseIsPlayerTurn:
+        this.phase === 'PlayerTurn' && !this.opponentReaction && !this.awaitingBallInHandPlacement,
       cueActive: this.physics.cue.active,
       cueX: this.physics.cue.pos.x,
       cueY: this.physics.cue.pos.y,
@@ -230,7 +298,7 @@ export class GameEngine implements Game {
 
     if (this.phase === 'PlayerTurn') {
       const lowTime = this.turnClock.progress01() < 0.22;
-      if (lowTime && !this.pressureSent) {
+      if (lowTime && !this.pressureSent && !this.awaitingBallInHandPlacement) {
         void this.tryDialogue('pressure', this.getOpponent());
         this.pressureSent = true;
       }
@@ -242,6 +310,12 @@ export class GameEngine implements Game {
     }
 
     if (this.phase === 'AITurn') {
+      if (this.aiCueBallPlacementSlide) {
+        this.tickAiCueBallPlacementSlide(dt);
+        if (this.aiCueBallPlacementSlide) {
+          return;
+        }
+      }
       // Hold AI shot until opponent reaction beat ends; camera blend still ticks earlier in `update`.
       if (!this.opponentReaction) {
         this.aiThink -= dt;
@@ -260,17 +334,39 @@ export class GameEngine implements Game {
       if (done) {
         const shot = this.physics.snapshotOutcome();
         const shooter = this.activePlayer;
+        const isBreakShot = this.activeShotIsOpeningBreak;
+        this.activeShotIsOpeningBreak = false;
         this.resolveTurn(
           resolveEightBallRules({
             ctx: this.rulesCtx,
             shooter,
             shot,
             balls: this.collectBallMeta(),
+            isBreakShot,
           }),
           shooter,
           shot,
         );
       }
+    }
+  }
+
+  private tickAiCueBallPlacementSlide(dt: number): void {
+    const s = this.aiCueBallPlacementSlide;
+    if (!s) return;
+    const durationSec = 0.52;
+    s.t += dt / durationSec;
+    const u = Math.min(1, s.t);
+    const k = 1 - (1 - u) ** 3;
+    const cx = s.fromX + (s.toX - s.fromX) * k;
+    const cy = s.fromY + (s.toY - s.fromY) * k;
+    this.physics.cue.pos.set(cx, cy);
+    this.physics.cue.vel.set(0, 0);
+    this.physics.cue.english.set(0, 0);
+    this.physics.cue.active = true;
+    if (u >= 1) {
+      this.physics.cue.pos.set(s.toX, s.toY);
+      this.aiCueBallPlacementSlide = null;
     }
   }
 
@@ -284,6 +380,12 @@ export class GameEngine implements Game {
   }
 
   private resolveTurn(res: TurnResolution, shooter: PlayerId, shot?: ShotOutcome): void {
+    if (this.awaitingFirstPlayerBreakShot && this.phase === 'PlayerTurn' && shot === undefined) {
+      this.awaitingFirstPlayerBreakShot = false;
+      this.aiCameraBlend = 0;
+      this.aiCameraBlendTarget = 0;
+      this.openingShotCameraReturnActive = false;
+    }
     if (shot) {
       this.pushSound(AssetIds.soundBallsSettle, 0.22);
       if (shot.potted.length > 0) this.pushSound(AssetIds.soundPocket, 0.45);
@@ -301,21 +403,55 @@ export class GameEngine implements Game {
       this.pendingAI = null;
       this.lastMatchWon = res.playerWon;
       this.aiCameraBlendTarget = 0;
+      this.openingShotCameraReturnActive = false;
+      this.awaitingBallInHandPlacement = false;
+      this.ballInHandDragging = false;
+      this.aiCueBallPlacementSlide = null;
       this.opponentReaction = null;
+      this.pushMusicStart(AssetIds.musicBgBetweenGames);
       return;
     }
 
+    if (res.nextTurn !== shooter) {
+      this.pushSound(AssetIds.soundTurnBell, 0.52);
+    }
+
     this.activePlayer = res.nextTurn;
+    if (this.activePlayer !== 'player') {
+      this.openingShotCameraReturnActive = false;
+    }
     this.pressureSent = false;
+
+    const foulBallInHand =
+      res.foul !== 'none' && !res.playerWon && !res.playerLost;
+    this.ballInHandDragging = false;
 
     if (this.activePlayer === 'player') {
       this.phase = 'PlayerTurn';
       this.turnClock.beginTurn('player');
       this.pendingAI = null;
       this.aiCameraBlendTarget = 0;
+      this.awaitingBallInHandPlacement = foulBallInHand;
     } else {
       this.phase = 'AITurn';
       this.turnClock.stop();
+      this.awaitingBallInHandPlacement = false;
+      if (foulBallInHand) {
+        const fromX = this.physics.cue.pos.x;
+        const fromY = this.physics.cue.pos.y;
+        const target = new Vec2();
+        if (this.physics.tryPickRandomLegalCueHandPosForAi(target)) {
+          this.aiCueBallPlacementSlide = {
+            fromX,
+            fromY,
+            toX: target.x,
+            toY: target.y,
+            t: 0,
+          };
+        } else {
+          this.physics.placeCueBallInKitchen();
+        }
+      }
       const plan = this.ai.compute({
         table: this.table,
         balls: this.physics.balls,
@@ -327,16 +463,23 @@ export class GameEngine implements Game {
       const thinkSec = plan.thinkMs / 1000;
       this.aiThinkTotal = Math.max(0.001, thinkSec);
       this.aiThink = thinkSec;
-      this.aiCameraBlendTarget = Math.random() < AI_CAMERA_CINEMATIC_CHANCE ? 1 : 0;
+      this.aiCameraBlendTarget =
+        this.awaitingFirstAiShot || Math.random() >= AI_CAMERA_CINEMATIC_CHANCE ? 0 : 1;
     }
   }
 
   private tickAiCameraBlend(dt: number): void {
     const target = this.aiCameraBlendTarget;
-    const k = target < this.aiCameraBlend ? AI_CAMERA_BLEND_EXP_RETURN : AI_CAMERA_BLEND_EXP;
+    let k = target < this.aiCameraBlend ? AI_CAMERA_BLEND_EXP_RETURN : AI_CAMERA_BLEND_EXP;
+    if (this.openingShotCameraReturnActive && target < this.aiCameraBlend) {
+      k = OPENING_BREAK_CAMERA_BLEND_RETURN_EXP;
+    }
     const a = 1 - Math.exp(-k * Math.max(0, dt));
     this.aiCameraBlend += (target - this.aiCameraBlend) * a;
     if (Math.abs(this.aiCameraBlend - target) < 0.002) this.aiCameraBlend = target;
+    if (this.openingShotCameraReturnActive && this.aiCameraBlend <= 0.002) {
+      this.openingShotCameraReturnActive = false;
+    }
   }
 
   private maybeTaunt(res: TurnResolution, shooter: PlayerId, shot?: ShotOutcome): void {
@@ -403,7 +546,7 @@ export class GameEngine implements Game {
 
     if (Math.random() > p) return;
     /** Reaction portrait + text on screen; AI waits until this elapses. */
-    const ttl = 4.9 + Math.random() * 2.1;
+    const ttl = OPPONENT_REACTION_TTL_MIN_SEC + Math.random() * OPPONENT_REACTION_TTL_RANDOM_SEC;
     this.opponentReactionBeatSeq += 1;
     const opp = this.getOpponent();
     const portraitAssetId = opp.id === 'tung' ? tungReactionPortraitAssetIdForLine(spoken) : null;
@@ -415,12 +558,26 @@ export class GameEngine implements Game {
       portraitAssetId,
     };
     this.dialogue.alignBubbleTtl(ttl);
+    if (opp.id === 'tung' && portraitAssetId != null) {
+      this.playRandomTungTauntSound();
+    }
   }
 
   private tryDialogue(cat: DialogueCategory, opp: AICharacterProfile, silentChance?: number): string | null {
     return this.dialogue.trySpeak(cat, {
       personalitySilentChance: silentChance,
     });
+  }
+
+  /** One of `public/opponents/tung/audio/tung{1,2,3}.ogg` when the center portrait reaction is shown. */
+  private playRandomTungTauntSound(): void {
+    const clips = [
+      AssetIds.soundTungTaunt1,
+      AssetIds.soundTungTaunt2,
+      AssetIds.soundTungTaunt3,
+    ] as const;
+    const pick = clips[Math.floor(Math.random() * clips.length)]!;
+    this.pushSound(pick, 0.88);
   }
 
   getSnapshot(): GameSnapshot {
@@ -446,29 +603,15 @@ export class GameEngine implements Game {
   }
 
   /** Potted object balls for HUD chips (excludes 8; eight is endgame). */
-  /** Short English labels above each player pot strip; "-" until groups are chosen. */
+  /** Pot strip row labels: empty until groups are chosen; then spaces only (icons carry meaning). */
   private getPotTargetLabels(): { opponent: string; player: string } {
-    const balls = this.physics.balls;
     const ctx = this.rulesCtx;
-    const remainingInGroup = (g: 'solid' | 'stripe') =>
-      balls.some((b) => b.active && kindToGroup(b.kind) === g);
 
     if (ctx.openTable || ctx.playerGroup == null || ctx.aiGroup == null) {
-      return { opponent: '-', player: '-' };
+      return { opponent: '', player: '' };
     }
-    const opp =
-      remainingInGroup(ctx.aiGroup)
-        ? ctx.aiGroup === 'solid'
-          ? 'Solids (1-7)'
-          : 'Stripes (9-15)'
-        : '8 ball';
-    const pl =
-      remainingInGroup(ctx.playerGroup)
-        ? ctx.playerGroup === 'solid'
-          ? 'Solids (1-7)'
-          : 'Stripes (9-15)'
-        : '8 ball';
-    return { opponent: opp, player: pl };
+    const potLabelSpacer = '    ';
+    return { opponent: potLabelSpacer, player: potLabelSpacer };
   }
 
   getPotHudState(): PotHudState {
@@ -507,10 +650,17 @@ export class GameEngine implements Game {
     const pot = this.getPotHudState();
     const potTargets = this.getPotTargetLabels();
     const eightPocketed = !this.physics.balls.some((b) => b.kind === 'eight' && b.active);
-    const prompts =
-      snap.dialogue != null
-        ? [{ id: 'dialogue', text: snap.dialogue.text, priority: 1 }]
-        : ([] as const);
+    const prompts: { id: string; text: string; priority: number }[] = [];
+    if (this.awaitingBallInHandPlacement && this.phase === 'PlayerTurn') {
+      prompts.push({
+        id: 'ball_in_hand',
+        text: 'Drag the cue ball to place it — then shoot.',
+        priority: 2,
+      });
+    }
+    if (snap.dialogue != null) {
+      prompts.push({ id: 'dialogue', text: snap.dialogue.text, priority: 1 });
+    }
 
     const panels: string[] = [];
     if (snap.phase === 'MainMenu') panels.push('menu');
@@ -562,8 +712,8 @@ export class GameEngine implements Game {
   }
 
   /** F tuşu overlay — rakip / sinematik kamera parametreleri. */
-  getOpponentCameraDebug(viewport: ViewportSize) {
-    const c = this.computeCameraFraming(viewport);
+  getOpponentCameraDebug(viewport: ViewportSize, hints?: RenderRuntimeHints) {
+    const c = this.computeCameraFraming(viewport, hints);
     const d = (r: number) => (r * 180) / Math.PI;
     return {
       phase: this.phase,
@@ -586,9 +736,10 @@ export class GameEngine implements Game {
     };
   }
 
-  private computeCameraFraming(viewport: ViewportSize): {
+  private computeCameraFraming(viewport: ViewportSize, hints?: RenderRuntimeHints): {
     dist: number;
     aimY: number;
+    lookAtZ: number;
     useAiShotCamera: boolean;
     blend: number;
     aiPolar: number;
@@ -609,8 +760,19 @@ export class GameEngine implements Game {
     const aimY = cue.radius + 0.15;
     const useAiShotCamera =
       this.activePlayer === 'ai' && (this.phase === 'AITurn' || this.phase === 'BallSimulation');
+    const debugOppShotCam =
+      hints?.debugOpponentShotCamera === true &&
+      (this.phase === 'PlayerTurn' || this.phase === 'AITurn' || this.phase === 'BallSimulation');
     /** Oyuncu turunda da `aiCameraBlend` işler; böylece rakip kadrajından yumuşak dönüş olur. */
-    const blend = this.aiCameraBlend;
+    /** O tuşu: tam sinematik rakip kadrajı (normal oyunda `aiCameraBlend === 1` anına denk). */
+    /** Maç başı: break öncesi ilk oyuncu turunda preset A kadrajı (blend 1). */
+    const blend = debugOppShotCam
+      ? 1
+      : this.awaitingFirstPlayerBreakShot &&
+          this.activePlayer === 'player' &&
+          this.phase === 'PlayerTurn'
+        ? 1
+        : this.aiCameraBlend;
     const aiPolar =
       AI_CAMERA_PRESET === 'b' ? AI_CAMERA_PRESET_B_POLAR_RAD : AI_CAMERA_PRESET_A_POLAR_RAD;
     const aiAzimuth =
@@ -624,10 +786,22 @@ export class GameEngine implements Game {
     const cp = Math.cos(polar);
     const ca = Math.cos(azimuth);
     const sa = Math.sin(azimuth);
-    const camPos = vec3(dist * sp * ca, dist * cp, dist * sp * sa);
+    const openingDecorT =
+      this.awaitingFirstPlayerBreakShot &&
+      this.activePlayer === 'player' &&
+      this.phase === 'PlayerTurn'
+        ? 1
+        : this.openingShotCameraReturnActive && this.activePlayer === 'player'
+          ? this.aiCameraBlend
+          : 0;
+    const yLift = openingDecorT > 0 ? AI_CAMERA_OPENING_BREAK_Y_OFFSET * openingDecorT : 0;
+    const lookAtZ =
+      openingDecorT > 0 ? -(th * 0.5) * AI_CAMERA_OPENING_BREAK_LOOK_AT_Z_SCALE * openingDecorT : 0;
+    const camPos = vec3(dist * sp * ca, dist * cp + yLift, dist * sp * sa);
     return {
       dist,
       aimY,
+      lookAtZ,
       useAiShotCamera,
       blend,
       aiPolar,
@@ -645,12 +819,12 @@ export class GameEngine implements Game {
     const tw = t.width;
     const th = t.height;
     const cue = this.physics.cue;
-    const camFr = this.computeCameraFraming(viewport);
-    const { aimY, camPos } = camFr;
+    const camFr = this.computeCameraFraming(viewport, hints);
+    const { aimY, camPos, lookAtZ } = camFr;
     const camera: RenderWorldState['camera'] = {
       mode: 'fixed',
       position: camPos,
-      target: vec3(0, aimY, 0),
+      target: vec3(0, aimY, lookAtZ),
       fovDeg: CAMERA_FOV_DEG,
       near: CAMERA_NEAR,
       far: CAMERA_FAR,
@@ -673,6 +847,20 @@ export class GameEngine implements Game {
       });
     }
 
+    if (this.phase !== 'MainMenu' && this.phase !== 'MatchEnd') {
+      const feltY = cue.radius + 0.15 + OPPONENT_TUNG_WORLD_Y_OFFSET;
+      const tz = -(th * 0.5) - OPPONENT_TUNG_PLACEHOLDER_PAST_RAIL_Z;
+      objects.push({
+        objectId: 'opponent.tungPlaceholder',
+        templateId: AssetIds.opponentTungPlaceholder,
+        transform: transformAt(vec3(OPPONENT_TUNG_PLACEHOLDER_OFFSET_X, feltY, tz), uniformScale(1)),
+        visible: true,
+        lifetime: 'persistent',
+        replication: 'localCosmetic',
+        renderLayer: 'world',
+      });
+    }
+
     const aiPlan = this.phase === 'AITurn' && cue.active ? this.getAiCuePreview() : null;
     const aimVis = this.poolInput.getStrokeAimForRender();
     const effectiveAim = aiPlan ? aiPlan.angle : aimVis;
@@ -683,6 +871,7 @@ export class GameEngine implements Game {
     const showAim =
       cue.active &&
       this.phase !== 'BallSimulation' &&
+      !this.awaitingBallInHandPlacement &&
       ((this.phase === 'PlayerTurn') || (this.phase === 'AITurn' && aiPlan != null));
     const showCue = showAim;
 
@@ -715,7 +904,7 @@ export class GameEngine implements Game {
 
     const polylines: PolylineObjectState[] = [];
     if (showAim) {
-      const preview = computeAimPreview(this.physics.balls, cue, effectiveAim);
+      const preview = computeAimPreview(this.physics.balls, cue, effectiveAim, this.rulesCtx);
       const lineY = cue.radius + 0.2;
       polylines.push(
         segmentToPolyline(
@@ -762,13 +951,75 @@ export class GameEngine implements Game {
       polylines.push(...buildPhysicsDebugLines(t, tw, th, cue.radius));
     }
 
+    const cuePullHandHint =
+      this.awaitingFirstPlayerBreakShot &&
+      this.activePlayer === 'player' &&
+      this.phase === 'PlayerTurn' &&
+      !this.opponentReaction &&
+      !this.awaitingBallInHandPlacement &&
+      showCue &&
+      this.poolInput.strokeMode !== 'charge';
+
+    const cueBallInHandCursorHint =
+      this.awaitingBallInHandPlacement && this.phase === 'PlayerTurn' && this.physics.cue.active;
+
     return {
       camera,
       objects,
       polylines,
       tableSpace: { width: tw, height: th },
       ambientColorHex: '#0b0f14',
+      cuePullHandHint,
+      cueBallInHandCursorHint,
     };
+  }
+
+  /**
+   * Faul sonrası ball-in-hand: beyaz üzerinden sürükle–bırak; pointer olayları `PoolInputState`’e gitmez.
+   */
+  private filterBallInHandPointerCommands(
+    commands: readonly GameInputCommand[],
+  ): GameInputCommand[] {
+    if (!this.awaitingBallInHandPlacement || this.phase !== 'PlayerTurn' || !this.physics.cue.active) {
+      return [...commands];
+    }
+    const out: GameInputCommand[] = [];
+    const pickupR = this.physics.cue.radius * 2.85;
+    for (const c of commands) {
+      if (c.type !== 'pointer.table') {
+        out.push(c);
+        continue;
+      }
+      const { phase, tableX, tableY } = c;
+      if (phase === 'down') {
+        const dx = tableX - this.physics.cue.pos.x;
+        const dy = tableY - this.physics.cue.pos.y;
+        if (dx * dx + dy * dy <= pickupR * pickupR) {
+          this.ballInHandDragging = true;
+        } else {
+          /** Boş alana tık: beyazı taşımadan onay (ör. mutfak konumu uygunsa). */
+          this.awaitingBallInHandPlacement = false;
+        }
+        continue;
+      }
+      if (phase === 'move' && this.ballInHandDragging) {
+        this.physics.moveCueBallForBallInHand(tableX, tableY);
+        continue;
+      }
+      if (phase === 'up') {
+        if (this.ballInHandDragging) {
+          this.physics.moveCueBallForBallInHand(tableX, tableY);
+          this.ballInHandDragging = false;
+          this.awaitingBallInHandPlacement = false;
+        }
+        continue;
+      }
+      if (phase === 'cancel') {
+        this.ballInHandDragging = false;
+        continue;
+      }
+    }
+    return out;
   }
 
   private applyMenuCommands(commands: readonly GameInputCommand[]): void {
@@ -845,16 +1096,8 @@ function segmentToPolyline(
   };
 }
 
-/** Bant çizgileri — fizikte çarpışma; top geçemez. */
-const DEBUG_CUSHION_BARRIER = 0xff2222;
-/** Cep ağzı / throat / cep halkaları — geçilebilir (delik); yeşil. */
-const DEBUG_PASS_THROAT = 0x55dd77;
-const DEBUG_PASS_POCKET_OUTER = 0x44cc66;
-const DEBUG_PASS_POCKET_INNER = 0x66ee99;
-/** Oynanabilir dikdörtgen referansı (engel değil). */
-const DEBUG_PLAY_REF = 0x7799bb;
-/** Masa dış çerçeve referansı. */
-const DEBUG_OUTER_REF = 0x999999;
+/** Topun geçemeyeceği her segment (rail + cep dış duvar + cep–bant köprü çizgileri). */
+const DEBUG_CUSHION_BLOCK = 0xff2222;
 
 function buildPhysicsDebugLines(
   t: Table,
@@ -863,8 +1106,6 @@ function buildPhysicsDebugLines(
   ballR: number,
 ): PolylineObjectState[] {
   const py = 0.12;
-  const pyMouth = 0.135;
-  const pyPot = 0.15;
   const out: PolylineObjectState[] = [];
   let idx = 0;
 
@@ -883,96 +1124,13 @@ function buildPhysicsDebugLines(
     }
   };
 
-  const cushionVerts: import('../world/renderTypes.js').Vec3Data[] = [];
+  const blockVerts: import('../world/renderTypes.js').Vec3Data[] = [];
   for (const seg of t.cushions) {
-    cushionVerts.push(
-      vec3(seg.ax - tw * 0.5, py, seg.ay - th * 0.5),
-      vec3(seg.bx - tw * 0.5, py, seg.by - th * 0.5),
-    );
+    const p0 = vec3(seg.ax - tw * 0.5, py, seg.ay - th * 0.5);
+    const p1 = vec3(seg.bx - tw * 0.5, py, seg.by - th * 0.5);
+    blockVerts.push(p0, p1);
   }
-  pushSeg(cushionVerts, DEBUG_CUSHION_BARRIER, 'cush');
-
-  const throatVerts: import('../world/renderTypes.js').Vec3Data[] = [];
-  const pushW = (px: number, pz: number, yv: number): void => {
-    throatVerts.push(vec3(px - tw * 0.5, yv, pz - th * 0.5));
-  };
-  const innerL = t.playableMinX;
-  const innerR = t.playableMaxX;
-  const innerT = t.playableMinY;
-  const innerB = t.playableMaxY;
-  const cy = (innerT + innerB) * 0.5;
-  const ca = t.cushionCornerAlong;
-  const mh = t.cushionMidHalf;
-  const sc = t.cushionSideCorner;
-  const throatLine = (ax: number, ay: number, bx: number, by: number): void => {
-    pushW(ax, ay, pyMouth);
-    pushW(bx, by, pyMouth);
-  };
-  throatLine(innerL + ca, innerT, innerL, innerT + sc);
-  throatLine(innerR - ca, innerT, innerR, innerT + sc);
-  throatLine(innerL + ca, innerB, innerL, innerB - sc);
-  throatLine(innerR - ca, innerB, innerR, innerB - sc);
-  throatLine(innerL, cy - mh, innerL, cy + mh);
-  throatLine(innerR, cy - mh, innerR, cy + mh);
-  for (let i = 0; i + 1 < throatVerts.length; i += 2) {
-    pushSeg([throatVerts[i]!, throatVerts[i + 1]!], DEBUG_PASS_THROAT, 'throat');
-  }
-
-  const pocketSegs = 40;
-  for (const pocket of t.pockets) {
-    const ring: import('../world/renderTypes.js').Vec3Data[] = [];
-    for (let i = 0; i <= pocketSegs; i++) {
-      const a = (i / pocketSegs) * Math.PI * 2;
-      const x = pocket.pos.x + Math.cos(a) * pocket.radius;
-      const z = pocket.pos.y + Math.sin(a) * pocket.radius;
-      ring.push(vec3(x - tw * 0.5, py, z - th * 0.5));
-    }
-    for (let i = 0; i < pocketSegs; i++) {
-      pushSeg([ring[i]!, ring[i + 1]!], DEBUG_PASS_POCKET_OUTER, 'pocket');
-    }
-    const potR = Math.max(0.5, pocket.radius - ballR * 0.35);
-    const innerRing: import('../world/renderTypes.js').Vec3Data[] = [];
-    for (let i = 0; i <= pocketSegs; i++) {
-      const ang = (i / pocketSegs) * Math.PI * 2;
-      const x2 = pocket.pos.x + Math.cos(ang) * potR;
-      const z2 = pocket.pos.y + Math.sin(ang) * potR;
-      innerRing.push(vec3(x2 - tw * 0.5, pyPot, z2 - th * 0.5));
-    }
-    for (let i = 0; i < pocketSegs; i++) {
-      pushSeg([innerRing[i]!, innerRing[i + 1]!], DEBUG_PASS_POCKET_INNER, 'pocketInner');
-    }
-  }
-
-  const playLoop = [
-    vec3(t.playableMinX - tw * 0.5, py, t.playableMinY - th * 0.5),
-    vec3(t.playableMaxX - tw * 0.5, py, t.playableMinY - th * 0.5),
-    vec3(t.playableMaxX - tw * 0.5, py, t.playableMaxY - th * 0.5),
-    vec3(t.playableMinX - tw * 0.5, py, t.playableMaxY - th * 0.5),
-    vec3(t.playableMinX - tw * 0.5, py, t.playableMinY - th * 0.5),
-  ];
-  for (let i = 0; i < playLoop.length - 1; i++) {
-    pushSeg([playLoop[i]!, playLoop[i + 1]!], DEBUG_PLAY_REF, 'play');
-  }
-
-  const outerLoop = [
-    vec3(-tw * 0.5, py, -th * 0.5),
-    vec3(tw * 0.5, py, -th * 0.5),
-    vec3(tw * 0.5, py, th * 0.5),
-    vec3(-tw * 0.5, py, th * 0.5),
-    vec3(-tw * 0.5, py, -th * 0.5),
-  ];
-  for (let i = 0; i < outerLoop.length - 1; i++) {
-    out.push({
-      objectId: `debug.phys.outer.${i}`,
-      templateId: 'debug.line',
-      points: [outerLoop[i]!, outerLoop[i + 1]!],
-      colorHex: `#${DEBUG_OUTER_REF.toString(16).padStart(6, '0')}`,
-      opacity: 0.5,
-      visible: true,
-      lifetime: 'oneShot',
-      replication: 'localCosmetic',
-    });
-  }
+  pushSeg(blockVerts, DEBUG_CUSHION_BLOCK, 'cushBlock');
 
   return out;
 }

@@ -1,4 +1,5 @@
 import { Ball } from './Ball.js';
+import type { CushionSegment } from './Table.js';
 import { Table } from './Table.js';
 import { Vec2 } from './Vec2.js';
 
@@ -22,11 +23,16 @@ export interface ShotOutcome {
   scratched: boolean;
   potted: PottedEvent[];
   anyBallMoved: boolean;
+  /** After first cue–object contact, any ball (including cue) touched a cushion. */
+  railAfterFirstContact: boolean;
+  /** Distinct non-cue ball ids that hit a cushion this shot (illegal break counts ≥4). */
+  breakCushionBallCount: number;
 }
 
 const tmpA = new Vec2();
 const tmpB = new Vec2();
 const tmpN = new Vec2();
+const tmpCueHand = new Vec2();
 
 
 export class CollisionSystem {
@@ -42,7 +48,11 @@ export class CollisionSystem {
     scratched: false,
     potted: [],
     anyBallMoved: false,
+    railAfterFirstContact: false,
+    breakCushionBallCount: 0,
   };
+  /** Object balls that hit a cushion at least once this shot (for illegal-break count). */
+  private readonly breakCushionBallIds = new Set<number>();
 
   constructor(table: Table, ballRadius: number) {
     this.table = table;
@@ -79,6 +89,99 @@ export class CollisionSystem {
     this.cue.english.set(0, 0);
   }
 
+  /** Ball-in-hand: playable alan + diğer aktif toplardan ayır. */
+  moveCueBallForBallInHand(tableX: number, tableY: number): void {
+    const cue = this.cue;
+    cue.active = true;
+    this.clampCueBallInHandInto(tableX, tableY, cue.pos);
+    cue.vel.set(0, 0);
+    cue.english.set(0, 0);
+  }
+
+  /**
+   * Rakip ball-in-hand: rastgele uygun nokta `out` içine (isteğe bağlı animasyon için).
+   * @returns false ise mutfak yerleştirmesi gerekir.
+   */
+  tryPickRandomLegalCueHandPosForAi(out: Vec2): boolean {
+    const t = this.table;
+    const cue = this.cue;
+    const r = cue.radius;
+    const minX = t.playableMinX + r;
+    const maxX = t.playableMaxX - r;
+    const minY = t.playableMinY + r;
+    const maxY = t.playableMaxY - r;
+    if (maxX <= minX || maxY <= minY) return false;
+    for (let k = 0; k < 52; k++) {
+      const tx = minX + Math.random() * (maxX - minX);
+      const ty = minY + Math.random() * (maxY - minY);
+      this.clampCueBallInHandInto(tx, ty, tmpCueHand);
+      if (!this.cuePositionOverlapsActiveObjects(tmpCueHand)) {
+        out.copy(tmpCueHand);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Rakip faul sonrası AI: rastgele uygun nokta, yoksa mutfak. */
+  placeCueBallRandomLegalForAi(): void {
+    const cue = this.cue;
+    if (this.tryPickRandomLegalCueHandPosForAi(cue.pos)) {
+      cue.active = true;
+      cue.vel.set(0, 0);
+      cue.english.set(0, 0);
+      return;
+    }
+    this.placeCueBallInKitchen();
+  }
+
+  private cuePositionOverlapsActiveObjects(pos: Vec2): boolean {
+    const cue = this.cue;
+    const pad = 1.08;
+    for (const b of this.balls) {
+      if (!b.active || b.kind === 'cue') continue;
+      const need = (cue.radius + b.radius) * pad;
+      const dx = pos.x - b.pos.x;
+      const dy = pos.y - b.pos.y;
+      if (dx * dx + dy * dy < need * need) return true;
+    }
+    return false;
+  }
+
+  private clampCueBallInHandInto(tx: number, ty: number, out: Vec2): void {
+    const t = this.table;
+    const cue = this.cue;
+    const r = cue.radius;
+    out.set(
+      Math.max(t.playableMinX + r, Math.min(t.playableMaxX - r, tx)),
+      Math.max(t.playableMinY + r, Math.min(t.playableMaxY - r, ty)),
+    );
+    for (let iter = 0; iter < 14; iter++) {
+      let adjusted = false;
+      for (const b of this.balls) {
+        if (!b.active || b.kind === 'cue') continue;
+        const dx = out.x - b.pos.x;
+        const dy = out.y - b.pos.y;
+        const dist = Math.hypot(dx, dy);
+        const minSep = r + b.radius + 1.2;
+        if (dist < 1e-7) {
+          out.x += minSep;
+          adjusted = true;
+          continue;
+        }
+        if (dist < minSep) {
+          const push = (minSep - dist) / dist;
+          out.x += dx * push;
+          out.y += dy * push;
+          adjusted = true;
+        }
+      }
+      out.x = Math.max(t.playableMinX + r, Math.min(t.playableMaxX - r, out.x));
+      out.y = Math.max(t.playableMinY + r, Math.min(t.playableMaxY - r, out.y));
+      if (!adjusted) break;
+    }
+  }
+
   applyShot(angle: number, power01: number, spinX: number, spinY: number): void {
     const speed = 520 * (0.25 + 0.75 * power01);
     const c = Math.cos(angle);
@@ -96,6 +199,9 @@ export class CollisionSystem {
     this.shotOutcome.scratched = false;
     this.shotOutcome.potted.length = 0;
     this.shotOutcome.anyBallMoved = this.cue.speed() > STOP_EPS;
+    this.shotOutcome.railAfterFirstContact = false;
+    this.breakCushionBallIds.clear();
+    this.shotOutcome.breakCushionBallCount = 0;
   }
 
   /** One render-frame step. Returns true when simulation finished. */
@@ -119,7 +225,7 @@ export class CollisionSystem {
       }
       this.resolveBallBall(this.shotOutcome, h);
       this.resolvePockets(this.shotOutcome);
-      this.resolveCushions();
+      this.resolveCushions(this.shotOutcome);
       this.applyFriction(h);
     }
 
@@ -138,11 +244,14 @@ export class CollisionSystem {
   }
 
   snapshotOutcome(): ShotOutcome {
+    this.shotOutcome.breakCushionBallCount = this.breakCushionBallIds.size;
     return {
       firstHitId: this.shotOutcome.firstHitId,
       scratched: this.shotOutcome.scratched,
       anyBallMoved: this.shotOutcome.anyBallMoved,
       potted: this.shotOutcome.potted.map((p) => ({ ...p })),
+      railAfterFirstContact: this.shotOutcome.railAfterFirstContact,
+      breakCushionBallCount: this.shotOutcome.breakCushionBallCount,
     };
   }
 
@@ -251,17 +360,18 @@ export class CollisionSystem {
     }
   }
 
-  private resolveCushions(): void {
+  private resolveCushions(outcome: ShotOutcome): void {
     const t = this.table;
     for (const b of this.balls) {
       if (!b.active) continue;
       for (const seg of t.cushions) {
-        this.collideSegment(b, seg.ax, seg.ay, seg.bx, seg.by);
+        this.collideSegment(b, seg, outcome);
       }
     }
   }
 
-  private collideSegment(b: Ball, ax: number, ay: number, bx: number, by: number): void {
+  private collideSegment(b: Ball, seg: CushionSegment, outcome: ShotOutcome): void {
+    const { ax, ay, bx, by } = seg;
     const abx = bx - ax;
     const aby = by - ay;
     const abLenSq = abx * abx + aby * aby;
@@ -286,16 +396,19 @@ export class CollisionSystem {
       const englishKick = b.kind === 'cue' ? b.english.x * 0.22 : 0;
       b.vel.sub(tmpN.clone().scale((1 + CUSHION_RESTITUTION) * vn));
       b.vel.add(tang.scale(englishKick));
+      if (b.kind !== 'cue') this.breakCushionBallIds.add(b.id);
+      if (outcome.firstHitId !== null) outcome.railAfterFirstContact = true;
     }
   }
 
   private resolvePockets(outcome: ShotOutcome): void {
+    const potF = this.table.layout.potRadiusBallFactor;
     for (const b of this.balls) {
       if (!b.active) continue;
       for (const p of this.table.pockets) {
         const dx = b.pos.x - p.pos.x;
         const dy = b.pos.y - p.pos.y;
-        if (dx * dx + dy * dy < (p.radius - b.radius * 0.35) ** 2) {
+        if (dx * dx + dy * dy < (p.radius - b.radius * potF) ** 2) {
           b.active = false;
           b.vel.set(0, 0);
           outcome.potted.push({ id: b.id, number: b.number });

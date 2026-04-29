@@ -121,8 +121,13 @@ function pickLegalTargets(view: AIWorldView): Ball[] {
   }
 
   if (!out.length) {
+    const avoidEightOpen =
+      rules.openTable &&
+      view.balls.some((x) => x.active && (x.kind === 'solid' || x.kind === 'stripe'));
     for (const b of view.balls) {
-      if (b.active && b.kind !== 'cue') out.push(b);
+      if (!b.active || b.kind === 'cue') continue;
+      if (avoidEightOpen && b.kind === 'eight') continue;
+      out.push(b);
     }
   }
   return out;

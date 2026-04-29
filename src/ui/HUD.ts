@@ -3,6 +3,11 @@ import type { HudState, PotHudState } from '../world/renderTypes.js';
 import { AssetManifest } from '../assets/AssetManifest.js';
 import { resolveBrowserAssetUrl } from '../assets/resolveBrowserAssetUrl.js';
 
+const SOUND_ICON_ON_URL = new URL('./sound.png', import.meta.url).href;
+const SOUND_ICON_OFF_URL = new URL('./sound_off.png', import.meta.url).href;
+const SOLID_BALL_ICON_URL = new URL('./SolidBall.png', import.meta.url).href;
+const STRIPE_BALL_ICON_URL = new URL('./StripeBall.png', import.meta.url).href;
+
 function opponentHudAvatarUrl(assetBaseUrl: string, opponentId: string): string {
   if (opponentId === 'tung') {
     const e = AssetManifest['ui.opponent.tung.avatar'];
@@ -22,6 +27,9 @@ export class HUD {
   private readonly bubble: HTMLElement;
   private readonly menu: HTMLElement;
   private readonly end: HTMLElement;
+  private readonly soundBtn: HTMLButtonElement;
+  private readonly soundBtnIcon: HTMLImageElement;
+  private soundMuted = false;
   private readonly gameRoot: HTMLElement | null;
   private readonly hudLayoutObserver: ResizeObserver;
 
@@ -30,6 +38,10 @@ export class HUD {
     private readonly getHud: () => HudState,
     private readonly pushCommand: (c: GameInputCommand) => void,
     private readonly assetBaseUrl: string,
+    private readonly opts?: {
+      toggleSound?: () => boolean;
+      isSoundMuted?: () => boolean;
+    },
   ) {
     this.root = root;
     this.gameRoot = root.parentElement?.id === 'game-root' ? root.parentElement : null;
@@ -89,14 +101,14 @@ export class HUD {
         <div class="hud-top-pots" id="hud-top-pots">
           <div class="hud-pot-wrap hud-pot-wrap--ai">
             <div class="pot-under">
-              <div class="pot-label" id="pot-label-left">—</div>
+              <div class="pot-label" id="pot-label-left"></div>
               <div id="pot-chips-left" class="pot-chips"></div>
             </div>
           </div>
           <div class="hud-pot-wrap hud-pot-wrap--spacer" aria-hidden="true"></div>
           <div class="hud-pot-wrap hud-pot-wrap--pl">
             <div class="pot-under pot-under-end">
-              <div class="pot-label pot-label-end" id="pot-label-right">—</div>
+              <div class="pot-label pot-label-end" id="pot-label-right"></div>
               <div id="pot-chips-right" class="pot-chips pot-chips-end"></div>
             </div>
           </div>
@@ -130,7 +142,19 @@ export class HUD {
       </div>
     `;
 
-    root.append(this.menu, this.topStack, this.oppReaction, this.bubble, this.end);
+    this.soundBtn = document.createElement('button');
+    this.soundBtn.className = 'hud-sound-btn interactive';
+    this.soundBtn.type = 'button';
+    this.soundBtn.setAttribute('aria-label', 'Toggle sound');
+    this.soundBtnIcon = document.createElement('img');
+    this.soundBtnIcon.className = 'hud-sound-btn-icon';
+    this.soundBtnIcon.alt = '';
+    this.soundBtnIcon.decoding = 'async';
+    this.soundBtn.append(this.soundBtnIcon);
+
+    root.append(this.menu, this.topStack, this.oppReaction, this.bubble, this.end, this.soundBtn);
+    this.soundMuted = this.opts?.isSoundMuted?.() ?? false;
+    this.syncSoundButtonVisual();
     this.hudLayoutObserver = new ResizeObserver(() => this.applyHudTopBandFromLayout());
     this.hudLayoutObserver.observe(this.topStack);
     this.hideGame();
@@ -147,6 +171,11 @@ export class HUD {
       const nx = ((pe.clientX - r.left) / r.width) * 2 - 1;
       const ny = ((pe.clientY - r.top) / r.height) * 2 - 1;
       this.pushCommand({ type: 'spin.set', nx: clamp(nx), ny: clamp(ny) });
+    });
+
+    this.soundBtn.addEventListener('click', () => {
+      this.soundMuted = this.opts?.toggleSound?.() ?? !this.soundMuted;
+      this.syncSoundButtonVisual();
     });
   }
 
@@ -165,6 +194,7 @@ export class HUD {
 
     this.menu.style.display = phase === 'MainMenu' ? 'flex' : 'none';
     this.end.style.display = phase === 'MatchEnd' ? 'flex' : 'none';
+    this.soundBtn.style.display = phase === 'MainMenu' ? 'none' : 'inline-flex';
 
     if (phase === 'MatchEnd') {
       if (eb.lastMatchWon !== null) {
@@ -301,6 +331,7 @@ export class HUD {
     const lblL = this.topStack.querySelector('#pot-label-left')!;
     const lblR = this.topStack.querySelector('#pot-label-right')!;
     const potUnders = this.topStack.querySelectorAll('.pot-under');
+    const potsRow = this.topStack.querySelector('#hud-top-pots') as HTMLElement;
 
     for (const el of potUnders) {
       (el as HTMLElement).style.display = '';
@@ -310,15 +341,17 @@ export class HUD {
     lblR.textContent = ctx.potTargetLabelPlayer;
 
     if (!ctx.showPotProgressStrip) {
-      const eightRow = ctx.eightPocketed ? chipHtml(8) : eightDueHtml();
-      chipsL.innerHTML = eightRow;
-      chipsR.innerHTML = eightRow;
+      chipsL.innerHTML = '';
+      chipsR.innerHTML = '';
+      potsRow.style.display = 'none';
       return;
     }
 
+    potsRow.style.removeProperty('display');
+
     if (pot.kind === 'open') {
-      chipsL.innerHTML = stripOrdered(SOLID_NUMBERS, pot.solids);
-      chipsR.innerHTML = stripOrdered(STRIPE_NUMBERS, pot.stripes);
+      chipsL.innerHTML = stripOrdered(SOLID_NUMBERS, pot.solids, 'solid');
+      chipsR.innerHTML = stripOrdered(STRIPE_NUMBERS, pot.stripes, 'stripe');
       return;
     }
 
@@ -327,8 +360,8 @@ export class HUD {
     if (pg && ag) {
       const playerOrder = pg === 'solid' ? SOLID_NUMBERS : STRIPE_NUMBERS;
       const aiOrder = ag === 'solid' ? SOLID_NUMBERS : STRIPE_NUMBERS;
-      chipsL.innerHTML = stripOrdered(aiOrder, pot.ai);
-      chipsR.innerHTML = stripOrdered(playerOrder, pot.player);
+      chipsL.innerHTML = stripOrdered(aiOrder, pot.ai, ag);
+      chipsR.innerHTML = stripOrdered(playerOrder, pot.player, pg);
     } else {
       chipsL.innerHTML = pot.ai.map((n) => chipHtml(n)).join('');
       chipsR.innerHTML = pot.player.map((n) => chipHtml(n)).join('');
@@ -350,7 +383,14 @@ export class HUD {
     this.oppReaction.classList.remove('show');
     this.bubble.style.display = 'none';
     this.end.style.display = 'none';
+    this.soundBtn.style.display = 'none';
     this.clearHudTopBand();
+  }
+
+  private syncSoundButtonVisual(): void {
+    this.soundBtnIcon.src = this.soundMuted ? SOUND_ICON_OFF_URL : SOUND_ICON_ON_URL;
+    this.soundBtn.setAttribute('aria-pressed', this.soundMuted ? 'true' : 'false');
+    this.soundBtn.title = this.soundMuted ? 'Sound off' : 'Sound on';
   }
 }
 
@@ -378,18 +418,18 @@ function chipColor(n: number): string {
   return m[n] ?? '#888';
 }
 
-function stripOrdered(order: readonly number[], potted: number[]): string {
+function stripOrdered(
+  order: readonly number[],
+  potted: number[],
+  slotKind: 'solid' | 'stripe',
+): string {
   const set = new Set(potted);
-  return order.map((n) => (set.has(n) ? chipHtml(n) : slotHtml())).join('');
+  return order.map((n) => (set.has(n) ? chipHtml(n) : slotHtml(slotKind))).join('');
 }
 
-/** 8-ball still on table — show target digit before group strip appears. */
-function eightDueHtml(): string {
-  return '<span class="pot-eight-due" aria-hidden="true">8</span>';
-}
-
-function slotHtml(): string {
-  return '<span class="pot-slot" aria-hidden="true"></span>';
+function slotHtml(slotKind: 'solid' | 'stripe'): string {
+  const src = slotKind === 'solid' ? SOLID_BALL_ICON_URL : STRIPE_BALL_ICON_URL;
+  return `<span class="pot-slot pot-slot--icon" aria-hidden="true"><img class="pot-slot-img" src="${src}" alt="" decoding="async" /></span>`;
 }
 
 function chipHtml(n: number): string {

@@ -5,6 +5,10 @@ import { HUD } from '../ui/HUD.js';
 export type BrowserHudAdapterOptions = {
   /** Vite `import.meta.env.BASE_URL` for manifest `browserUrl` resolution. */
   assetBaseUrl?: string;
+  /** Toggles music/sfx mute state; returns new muted flag. */
+  toggleSound?: () => boolean;
+  /** Returns current mute state for initial icon sync. */
+  isSoundMuted?: () => boolean;
 };
 
 /** Binds DOM HUD to `HudState` and routes chrome actions to input commands. */
@@ -18,7 +22,10 @@ export class BrowserHudAdapter {
     options?: BrowserHudAdapterOptions,
   ) {
     const base = options?.assetBaseUrl ?? '/';
-    this.hud = new HUD(root, () => engine.getHudState(), pushCommand, base);
+    this.hud = new HUD(root, () => engine.getHudState(), pushCommand, base, {
+      toggleSound: options?.toggleSound,
+      isSoundMuted: options?.isSoundMuted,
+    });
   }
 
   bind(): void {

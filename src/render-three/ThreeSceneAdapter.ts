@@ -1,18 +1,20 @@
 import * as THREE from 'three';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { BallKind } from '../physics/Ball.js';
 import { Table } from '../physics/Table.js';
 import { AssetManifest } from '../assets/AssetManifest.js';
 import { AssetIds } from '../assets/AssetIds.js';
+import { OPPONENT_TUNG_MODEL_TARGET_HEIGHT } from '../core/Constants.js';
 import { resolveBrowserAssetUrl } from '../assets/resolveBrowserAssetUrl.js';
 import type { RenderRuntimeHints } from '../core/gameContract.js';
 import type { PolylineObjectState, RenderWorldState, WorldObjectState } from '../world/renderTypes.js';
 
 /** `Table.glb` Y ölçeği — model ince kalıyorsa artır (fizik 2D, yalnızca görsel). */
-const TABLE_MESH_Y_THICKNESS_MUL = 10.0;
+const TABLE_MESH_Y_THICKNESS_MUL = 1.4;
 
 /** Masa + toplar + çizgileri Y’de yukarı (world birimi); HUD altında daha merkezli görünür. */
-const TABLE_SCENE_Y_LIFT = 22;
+const TABLE_SCENE_Y_LIFT = 24;
 
 /**
  * Fizikle uyumlu oyun düzlemi: top merkezi y ≈ radius + 0.15 (varsayılan radius 9 → 9.15).
@@ -25,9 +27,24 @@ const PLAYFIELD_RENDER_Y_OFFSET = -6;
 
 const TABLE_RAY_PLANE_W = -(TABLE_SCENE_Y_LIFT + TABLE_PLAY_SURFACE_LOCAL_Y + PLAYFIELD_RENDER_Y_OFFSET);
 
+/** Geniş zemin düzlemi; masanın `tableGroup` orijininin altında (world Y). */
+const FLOOR_PLANE_WORLD_Y = TABLE_SCENE_Y_LIFT - 124;
+const FLOOR_EXTEND_MUL = 2.75;
+
+/** Tung container local: duvar masadan uzakta (−Z), düzlem XY (Y yukarı). */
+const TUNG_BACK_WALL_LOCAL_Z = -400;
+const TUNG_BACK_WALL_WIDTH_TABLE_MUL = 5.68;
+const TUNG_BACK_WALL_HEIGHT_MODEL_MUL = 4.4;
+/** Duvarı biraz aşağı kaydır (Y azalır). */
+const TUNG_BACK_WALL_Y_PULL_DOWN = 56;
+const TUNG_BACK_WALL_TEX_REPEAT_X = 10.4;
+const TUNG_BACK_WALL_TEX_REPEAT_Y = 13.6;
+
 export type ThreeSceneAdapterOptions = {
   /** Vite `import.meta.env.BASE_URL` for `public/` textures and GLB fallbacks. */
   assetBaseUrl?: string;
+  /** Same instance as game physics so rails/pockets match after URL/localStorage tuning. */
+  physicsTable?: Table;
 };
 
 /**
@@ -53,6 +70,16 @@ export class ThreeSceneAdapter {
   private readonly tableGroup = new THREE.Group();
   private readonly cueGroup = new THREE.Group();
   private cueShaft!: THREE.Mesh;
+  /** İlk break “çek–vur” ipucu — `cuePullHandHint` açıkken sopada yukarı/aşağı. */
+  private cueHandHintSprite: THREE.Sprite | null = null;
+  private cueHandHintTexture: THREE.Texture | null = null;
+  private cueHandHintPhase = 0;
+  /** Beyazı sürükleyerek yerleştirme — `cueBallInHandCursorHint`. */
+  private ballInHandHintSprite: THREE.Sprite | null = null;
+  private ballInHandHintPhase = 0;
+  /** Büyük zemin; `tableGroup.clear()` bunu silmez (sahne kökünde). */
+  private floorMesh: THREE.Mesh | null = null;
+  private floorTexture: THREE.Texture | null = null;
   private readonly physicsTable: Table;
   /** Top numarası → diffuse (1–15, 0 = isteka); paylaşılan `Texture` referansı. */
   private readonly ballDiffuseByNumber = new Map<number, THREE.Texture>();
@@ -63,7 +90,7 @@ export class ThreeSceneAdapter {
     options?: ThreeSceneAdapterOptions,
   ) {
     this.assetBaseUrl = options?.assetBaseUrl ?? '/';
-    this.physicsTable = new Table();
+    this.physicsTable = options?.physicsTable ?? new Table();
 
     this.scene.background = new THREE.Color(0x0b0f14);
     this.camera = new THREE.PerspectiveCamera(24, 1, 40, 12000);
@@ -92,6 +119,8 @@ export class ThreeSceneAdapter {
   async preload(templateIds: readonly string[]): Promise<void> {
     void templateIds;
     await this.loadBallDiffuseTextures();
+    await this.loadCueHandHintTexture();
+    await this.loadFloorUnderTable();
   }
 
   dispose(): void {
@@ -99,12 +128,80 @@ export class ThreeSceneAdapter {
       t.dispose();
     }
     this.ballDiffuseByNumber.clear();
+    if (this.ballInHandHintSprite) {
+      const mb = this.ballInHandHintSprite.material as THREE.SpriteMaterial;
+      mb.map = null;
+      mb.dispose();
+      this.tableGroup.remove(this.ballInHandHintSprite);
+      this.ballInHandHintSprite = null;
+    }
+    if (this.cueHandHintSprite) {
+      const m = this.cueHandHintSprite.material as THREE.SpriteMaterial;
+      m.dispose();
+      this.cueGroup.remove(this.cueHandHintSprite);
+      this.cueHandHintSprite = null;
+    }
+    if (this.cueHandHintTexture) {
+      this.cueHandHintTexture.dispose();
+      this.cueHandHintTexture = null;
+    }
+    if (this.floorMesh) {
+      this.floorMesh.geometry.dispose();
+      const m = this.floorMesh.material;
+      if (!Array.isArray(m)) m.dispose();
+      else m.forEach((x) => x.dispose());
+      this.scene.remove(this.floorMesh);
+      this.floorMesh = null;
+    }
+    if (this.floorTexture) {
+      this.floorTexture.dispose();
+      this.floorTexture = null;
+    }
     this.renderer.dispose();
     this.ballGeo.dispose();
   }
 
   private resolveAssetUrl(browserUrl: string): string {
     return resolveBrowserAssetUrl(this.assetBaseUrl, browserUrl);
+  }
+
+  /** `public/textures/floor/floor.jpg` — masanın altında geniş zemin. */
+  private async loadFloorUnderTable(): Promise<void> {
+    if (this.floorMesh) return;
+    const url = this.resolveAssetUrl('textures/floor/floor.jpg');
+    const loader = new THREE.TextureLoader();
+    let tex: THREE.Texture;
+    try {
+      tex = await loader.loadAsync(url);
+    } catch {
+      console.warn('[ThreeSceneAdapter] Floor texture missing:', url);
+      return;
+    }
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(3.4, 3.4);
+    tex.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    this.floorTexture = tex;
+
+    const t = this.physicsTable;
+    const span = Math.max(t.width, t.height) * FLOOR_EXTEND_MUL;
+    const geom = new THREE.PlaneGeometry(span, span);
+    const mat = new THREE.MeshStandardMaterial({
+      map: tex,
+      color: 0xffffff,
+      roughness: 0.93,
+      metalness: 0.02,
+    });
+    const floor = new THREE.Mesh(geom, mat);
+    floor.name = 'env.floor';
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.set(0, FLOOR_PLANE_WORLD_Y, 0);
+    floor.receiveShadow = true;
+    this.floorMesh = floor;
+    this.scene.add(floor);
   }
 
   private async tryLoadTextureUrl(fullUrl: string): Promise<THREE.Texture | null> {
@@ -139,6 +236,66 @@ export class ThreeSceneAdapter {
       if (t) return t;
     }
     return null;
+  }
+
+  private async loadCueHandHintTexture(): Promise<void> {
+    if (this.cueHandHintTexture) return;
+    const href = new URL('../ui/hand-cursor-tap.png', import.meta.url).href;
+    const loader = new THREE.TextureLoader();
+    try {
+      const tex = await loader.loadAsync(href);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.wrapS = THREE.ClampToEdgeWrapping;
+      tex.wrapT = THREE.ClampToEdgeWrapping;
+      tex.generateMipmaps = false;
+      this.cueHandHintTexture = tex;
+      this.attachCueHandHintSprite();
+      this.attachBallInHandHandHintSprite();
+    } catch {
+      /* asset optional */
+    }
+  }
+
+  private attachCueHandHintSprite(): void {
+    if (!this.cueHandHintTexture || this.cueHandHintSprite) return;
+    const mat = new THREE.SpriteMaterial({
+      map: this.cueHandHintTexture,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      alphaTest: 0.01,
+    });
+    const sprite = new THREE.Sprite(mat);
+    sprite.name = 'cueHandHint';
+    sprite.renderOrder = 50;
+    sprite.scale.set(70, 70, 1);
+    sprite.center.set(0.52, 0.42);
+    sprite.rotation.z = 0.85;
+    sprite.visible = false;
+    this.cueGroup.add(sprite);
+    this.cueHandHintSprite = sprite;
+  }
+
+  private attachBallInHandHandHintSprite(): void {
+    if (!this.cueHandHintTexture || this.ballInHandHintSprite) return;
+    const mat = new THREE.SpriteMaterial({
+      map: this.cueHandHintTexture,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      alphaTest: 0.01,
+    });
+    const sprite = new THREE.Sprite(mat);
+    sprite.name = 'ballInHandHint';
+    sprite.renderOrder = 55;
+    sprite.scale.set(64, 64, 1);
+    sprite.center.set(0.5, 0.8);
+    sprite.rotation.z = 0;
+    sprite.visible = false;
+    this.tableGroup.add(sprite);
+    this.ballInHandHintSprite = sprite;
   }
 
   private async loadBallDiffuseTextures(): Promise<void> {
@@ -194,7 +351,57 @@ export class ThreeSceneAdapter {
     this.applyCamera(state.camera);
     this.syncWorldObjects(state.objects, dt);
     this.syncPolylines(state.polylines);
+    this.updateCueHandHint(state, dt);
+    this.updateBallInHandHandHint(state, dt);
+    this.updateTungIdleMixers(dt);
     this.renderer.render(this.scene, this.camera);
+  }
+
+  /** El ikonu: topa bakan uca yakın, local Y ile hafif çek–it hareketi (+Y = top yönü). */
+  private updateCueHandHint(state: RenderWorldState, dtSec: number): void {
+    const sprite = this.cueHandHintSprite;
+    if (!sprite) return;
+    const on =
+      state.cuePullHandHint === true && this.cueGroup.visible && state.cueBallInHandCursorHint !== true;
+    sprite.visible = on;
+    if (!on) return;
+    this.cueHandHintPhase += dtSec * 4.8;
+    const amp = 10;
+    /** +Y top/ucu; değeri düşürmek ikonu uçtan kavrama doğru uzaklaştırır. */
+    const baseY = 58;
+    const sideX = 12;
+    sprite.position.set(sideX, baseY - Math.sin(this.cueHandHintPhase) * amp, 0);
+  }
+
+  private updateBallInHandHandHint(state: RenderWorldState, dtSec: number): void {
+    const sprite = this.ballInHandHintSprite;
+    if (!sprite) return;
+    const on = state.cueBallInHandCursorHint === true;
+    sprite.visible = on;
+    if (!on) return;
+    let bx = 0;
+    let by = 0;
+    let bz = 0;
+    let found = false;
+    for (const o of state.objects) {
+      if (o.templateId === AssetIds.ballCue && o.visible) {
+        const p = o.transform.position;
+        bx = p.x;
+        by = p.y + TABLE_SCENE_Y_LIFT + PLAYFIELD_RENDER_Y_OFFSET;
+        bz = p.z;
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      sprite.visible = false;
+      return;
+    }
+    this.ballInHandHintPhase += dtSec * 5.2;
+    const bob = Math.sin(this.ballInHandHintPhase) * 5;
+    const w = this.physicsTable.width;
+    /** +X ≈ sağ; negatif Y ofseti = ikon biraz daha aşağı. */
+    sprite.position.set(bx + w * 0.036, by + w * -0.008 + bob, bz);
   }
 
   private applyCamera(cam: RenderWorldState['camera']): void {
@@ -299,6 +506,12 @@ export class ThreeSceneAdapter {
       this.cueGroup.visible = true;
       return this.cueGroup;
     }
+    if (o.templateId === AssetIds.opponentTungPlaceholder) {
+      const root = new THREE.Group();
+      this.loadTungBackdropBrickWall(root);
+      this.loadTungIdleFbxInto(root);
+      return root;
+    }
     const ball = parseBallTemplate(o.templateId);
     if (ball) {
       const diffuse = this.ballDiffuseByNumber.get(ball.num);
@@ -320,16 +533,127 @@ export class ThreeSceneAdapter {
     obj.scale.set(s.x, s.y, s.z);
   }
 
+  private updateTungIdleMixers(dtSec: number): void {
+    for (const obj of this.objectById.values()) {
+      const mixer = obj.userData.tungIdleMixer as THREE.AnimationMixer | undefined;
+      if (mixer) mixer.update(dtSec);
+    }
+  }
+
   private disposeObject(obj: THREE.Object3D): void {
     if (obj === this.cueGroup) return;
-    if (obj instanceof THREE.Mesh) {
-      const m = obj.material;
-      if (!Array.isArray(m)) m.dispose?.();
-      else m.forEach((x) => x.dispose?.());
-      if (obj.geometry && obj.geometry !== this.ballGeo) {
-        obj.geometry.dispose();
-      }
+    const mixer = obj.userData.tungIdleMixer as THREE.AnimationMixer | undefined;
+    const mixerRoot = obj.userData.tungIdleRoot as THREE.Object3D | undefined;
+    if (mixer) {
+      mixer.stopAllAction();
+      if (mixerRoot) mixer.uncacheRoot(mixerRoot);
+      obj.userData.tungIdleMixer = undefined;
+      obj.userData.tungIdleRoot = undefined;
     }
+    obj.userData.tungWallState = undefined;
+    obj.traverse((child) => {
+      if (child instanceof THREE.Mesh) {
+        const m = child.material;
+        if (!Array.isArray(m)) m.dispose?.();
+        else m.forEach((x) => x.dispose?.());
+        if (child.geometry && child.geometry !== this.ballGeo) {
+          child.geometry.dispose();
+        }
+      }
+    });
+  }
+
+  /** `public/textures/wall/cartoon-brick.png` — Tung’un arkasında dikey duvar (container local −Z). */
+  private loadTungBackdropBrickWall(container: THREE.Group): void {
+    if (container.userData.tungWallState === 'loading' || container.userData.tungWallState === 'done') return;
+    container.userData.tungWallState = 'loading';
+    const url = this.resolveAssetUrl('textures/wall/cartoon-brick.png');
+    const loader = new THREE.TextureLoader();
+    void loader
+      .loadAsync(url)
+      .then((tex) => {
+        if (container.userData.tungWallState !== 'loading') {
+          tex.dispose();
+          return;
+        }
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.wrapS = THREE.RepeatWrapping;
+        tex.wrapT = THREE.RepeatWrapping;
+        tex.repeat.set(TUNG_BACK_WALL_TEX_REPEAT_X, TUNG_BACK_WALL_TEX_REPEAT_Y);
+        tex.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+        tex.minFilter = THREE.LinearMipmapLinearFilter;
+        tex.magFilter = THREE.LinearFilter;
+        tex.generateMipmaps = true;
+
+        const wallH = OPPONENT_TUNG_MODEL_TARGET_HEIGHT * TUNG_BACK_WALL_HEIGHT_MODEL_MUL;
+        const wallW = this.physicsTable.width * TUNG_BACK_WALL_WIDTH_TABLE_MUL;
+        const geom = new THREE.PlaneGeometry(wallW, wallH);
+        const mat = new THREE.MeshStandardMaterial({
+          map: tex,
+          color: 0xffffff,
+          roughness: 0.94,
+          metalness: 0.02,
+          side: THREE.DoubleSide,
+        });
+        const wall = new THREE.Mesh(geom, mat);
+        wall.name = 'env.tungBackdropBrick';
+        wall.position.set(0, wallH * 0.5 - TUNG_BACK_WALL_Y_PULL_DOWN, TUNG_BACK_WALL_LOCAL_Z);
+        wall.receiveShadow = true;
+        wall.castShadow = false;
+        container.add(wall);
+        container.userData.tungWallState = 'done';
+      })
+      .catch((err: unknown) => {
+        console.warn('[ThreeSceneAdapter] Tung brick wall texture failed:', url, err);
+        container.userData.tungWallState = 'error';
+      });
+  }
+
+  /** `Tung_Idle.fbx` — ölçek + pivot ayaklar container orijininde, felt üzerinde hizalanır. */
+  private loadTungIdleFbxInto(container: THREE.Group): void {
+    if (container.userData.tungLoadState === 'loading' || container.userData.tungLoadState === 'done') return;
+    container.userData.tungLoadState = 'loading';
+    const href = new URL('../opponents/tung/model/Tung_Idle.fbx', import.meta.url).href;
+    const loader = new FBXLoader();
+    loader.load(
+      href,
+      (fbx) => {
+        fbx.traverse((o) => {
+          if (o instanceof THREE.Mesh) {
+            o.castShadow = true;
+            o.receiveShadow = true;
+          }
+        });
+        fbx.updateMatrixWorld(true);
+        const box0 = new THREE.Box3().setFromObject(fbx);
+        const size = box0.getSize(new THREE.Vector3());
+        const sy = OPPONENT_TUNG_MODEL_TARGET_HEIGHT / Math.max(size.y, 1e-4);
+        fbx.scale.setScalar(sy);
+        fbx.updateMatrixWorld(true);
+        let box2 = new THREE.Box3().setFromObject(fbx);
+        fbx.position.y = -box2.min.y;
+        fbx.updateMatrixWorld(true);
+        box2 = new THREE.Box3().setFromObject(fbx);
+        const c = box2.getCenter(new THREE.Vector3());
+        fbx.position.x -= c.x;
+        fbx.position.z -= c.z;
+        container.add(fbx);
+        if (fbx.animations.length > 0) {
+          const mixer = new THREE.AnimationMixer(fbx);
+          const action = mixer.clipAction(fbx.animations[0]!);
+          action.setLoop(THREE.LoopRepeat, Infinity);
+          action.play();
+          container.userData.tungIdleMixer = mixer;
+          container.userData.tungIdleRoot = fbx;
+        }
+        container.userData.tungLoadState = 'done';
+      },
+      undefined,
+      (err) => {
+        console.warn('[ThreeSceneAdapter] Tung_Idle.fbx load failed:', err);
+        container.userData.tungLoadState = 'error';
+      },
+    );
   }
 
   private syncPolylines(lines: readonly PolylineObjectState[]): void {
@@ -396,26 +720,37 @@ export class ThreeSceneAdapter {
   private buildLights(): void {
     const t = this.physicsTable;
     const span = Math.max(t.width, t.height) * 0.42 + 48;
-    const amb = new THREE.AmbientLight(0xffffff, 0.26);
+    const amb = new THREE.AmbientLight(0xffffff, 0.16);
     this.scene.add(amb);
-    const hemi = new THREE.HemisphereLight(0xc8e2ff, 0x4a3828, 0.42);
+    const hemi = new THREE.HemisphereLight(0xc8e2ff, 0x4a3828, 0.24);
     this.scene.add(hemi);
-    const sun = new THREE.DirectionalLight(0xfff5e8, 1.28);
-    sun.position.set(120, 620, 180);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.bias = -0.00015;
-    sun.shadow.normalBias = 0.028;
-    sun.shadow.camera.near = 80;
-    sun.shadow.camera.far = 1400;
-    sun.shadow.camera.left = -span;
-    sun.shadow.camera.right = span;
-    sun.shadow.camera.top = span;
-    sun.shadow.camera.bottom = -span;
-    this.scene.add(sun);
-    const fill = new THREE.DirectionalLight(0xa8c8f0, 0.22);
-    fill.position.set(-200, 380, -120);
-    this.scene.add(fill);
+    const rightKey = new THREE.DirectionalLight(0xfff3e2, 0.52);
+    rightKey.position.set(260, 500, 80);
+    rightKey.castShadow = true;
+    rightKey.shadow.mapSize.set(2048, 2048);
+    rightKey.shadow.bias = -0.00015;
+    rightKey.shadow.normalBias = 0.028;
+    rightKey.shadow.camera.near = 80;
+    rightKey.shadow.camera.far = 1400;
+    rightKey.shadow.camera.left = -span;
+    rightKey.shadow.camera.right = span;
+    rightKey.shadow.camera.top = span;
+    rightKey.shadow.camera.bottom = -span;
+    this.scene.add(rightKey);
+
+    const leftKey = new THREE.DirectionalLight(0xd3e6ff, 0.62);
+    leftKey.position.set(-320, 520, 120);
+    leftKey.castShadow = true;
+    leftKey.shadow.mapSize.set(2048, 2048);
+    leftKey.shadow.bias = -0.00015;
+    leftKey.shadow.normalBias = 0.028;
+    leftKey.shadow.camera.near = 80;
+    leftKey.shadow.camera.far = 1400;
+    leftKey.shadow.camera.left = -span;
+    leftKey.shadow.camera.right = span;
+    leftKey.shadow.camera.top = span;
+    leftKey.shadow.camera.bottom = -span;
+    this.scene.add(leftKey);
   }
 
   private buildTableFromManifest(): void {
@@ -517,6 +852,7 @@ export class ThreeSceneAdapter {
     });
 
     for (const seg of t.cushions) {
+      if (seg.role === 'pocketOuter' || seg.role === 'pocketBridge') continue;
       const ax = seg.ax - tw / 2;
       const az = seg.ay - th / 2;
       const bx = seg.bx - tw / 2;
@@ -597,6 +933,7 @@ export class ThreeSceneAdapter {
     tip.position.y = len * 0.5 + 8;
     tip.castShadow = true;
     this.cueGroup.add(tip);
+    this.attachCueHandHintSprite();
     this.cueGroup.visible = false;
   }
 }

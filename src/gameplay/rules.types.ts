@@ -17,6 +17,7 @@ export type FoulKind =
   | 'no_rail_contact'
   | 'no_ball_hit'
   | 'eight_early'
+  | 'illegal_break'
   | 'turn_timeout';
 
 export interface TurnResolution {
@@ -45,13 +46,27 @@ export function kindToGroup(kind: BallKind): BallGroup | null {
   return null;
 }
 
+function anyActiveSolidOrStripe(balls: BallMeta[]): boolean {
+  return balls.some((b) => b.active && (b.kind === 'solid' || b.kind === 'stripe'));
+}
+
+/** True when the shooter may legally make first contact with the 8 (run-out phase). */
+function shooterMayContactEightFirst(ctx: RulesContext, shooter: PlayerId, balls: BallMeta[]): boolean {
+  const own = shooter === 'player' ? ctx.playerGroup : ctx.aiGroup;
+  if (!own) return !anyActiveSolidOrStripe(balls);
+  const ownRemaining = balls.some((b) => b.active && kindToGroup(b.kind) === own);
+  return !ownRemaining;
+}
+
 export function resolveEightBallRules(input: {
   ctx: RulesContext;
   shooter: PlayerId;
   shot: ShotOutcome;
   balls: BallMeta[];
+  /** Opening break shot (player’s first stroke of the rack). */
+  isBreakShot?: boolean;
 }): TurnResolution {
-  const { ctx, shooter, shot, balls } = input;
+  const { ctx, shooter, shot, balls, isBreakShot = false } = input;
   const opponent: PlayerId = shooter === 'player' ? 'ai' : 'player';
 
   const defaultLoss = (reason: string): TurnResolution => ({
@@ -94,6 +109,10 @@ export function resolveEightBallRules(input: {
   const shooterOwnRemaining = ownGroup ? remaining(ownGroup) : true;
   const shooterNeedsEight = ownGroup && !shooterOwnRemaining;
 
+  const hadObjectBallPotted = pottedMeta.some(
+    (b) => b.kind === 'solid' || b.kind === 'stripe' || b.kind === 'eight',
+  );
+
   /** Illegal 8 contact / pocket timing (simplified). */
   if (eightPotted) {
     if (ctx.openTable) {
@@ -116,15 +135,20 @@ export function resolveEightBallRules(input: {
   }
 
   if (cuePotted) {
+    /** Açık masada hem beyaz hem renkli düşerse: gruplar pota göre belli olur, sıra yine rakibe (scratch). */
+    const assignedOnScratch =
+      ctx.openTable ? tryAssignOpenTableFromPotted(ctx, shooter, shot, balls, pottedMeta) : null;
     return {
       nextTurn: opponent,
       continueWithSamePlayer: false,
       foul: 'scratch',
       playerWon: false,
       playerLost: false,
-      reason: 'Cue ball pocketed — scratch.',
+      reason: assignedOnScratch
+        ? 'Cue ball pocketed — scratch. Groups are set from balls that dropped.'
+        : 'Cue ball pocketed — scratch.',
       respawnCueInKitchen: true,
-      assignedGroup: null,
+      assignedGroup: assignedOnScratch,
     };
   }
 
@@ -133,11 +157,19 @@ export function resolveEightBallRules(input: {
     foul = 'no_ball_hit';
   } else if (!firstHit) {
     foul = 'no_ball_hit';
-  } else if (!ctx.openTable && ownGroup && firstHit.kind === 'eight' && shooterOwnRemaining) {
+  } else if (firstHit.kind === 'eight' && !shooterMayContactEightFirst(ctx, shooter, balls)) {
     foul = 'eight_early';
   } else if (!ctx.openTable && ownGroup) {
     const g = kindToGroup(firstHit.kind);
     if (g && g !== ownGroup) foul = 'wrong_ball_first';
+  } else if (
+    !hadObjectBallPotted &&
+    shot.firstHitId != null &&
+    !shot.railAfterFirstContact &&
+    /** Açılış + açık masa: sıyırarak bir renkli/stripe’e değmek yeterli; “bant sonrası” şartı uygulanmaz. */
+    !(isBreakShot && ctx.openTable)
+  ) {
+    foul = 'no_rail_contact';
   }
 
   if (foul !== 'none') {
@@ -154,17 +186,17 @@ export function resolveEightBallRules(input: {
   }
 
   const assign = assignIfNeeded(ctx, shooter, shot, balls, pottedMeta, false);
+  /** `assignIfNeeded` ctx’yi güncellediği için vuruş sonrası grubu ctx’ten oku (önceki ownGroup null kalabiliyordu). */
+  const shooterGroupNow = shooter === 'player' ? ctx.playerGroup : ctx.aiGroup;
   let continueTurn = false;
 
   if (ctx.openTable) {
     const legallyPottedGroupBall = pottedMeta.find((b) => b.kind === 'solid' || b.kind === 'stripe');
     if (legallyPottedGroupBall) {
-      const g = kindToGroup(legallyPottedGroupBall.kind)!;
       continueTurn = true;
-      void g;
     }
-  } else if (ownGroup) {
-    continueTurn = pottedMeta.some((b) => kindToGroup(b.kind) === ownGroup);
+  } else if (shooterGroupNow) {
+    continueTurn = pottedMeta.some((b) => kindToGroup(b.kind) === shooterGroupNow);
   }
 
   return {
@@ -189,27 +221,32 @@ function foulMessage(f: FoulKind): string {
       return 'Scratch.';
     case 'eight_early':
       return 'Illegal contact with the 8 — foul.';
+    case 'no_rail_contact':
+      return 'No rail after contact — foul.';
+    case 'illegal_break':
+      return 'Illegal break — pot a ball or drive four balls to a rail.';
     default:
       return 'Foul.';
   }
 }
 
-function assignIfNeeded(
+/**
+ * Açık masada potlanan solid/stripe’lara göre grupları ata (WPA: aynı anda birden fazlaysa en düşük numara).
+ * `ctx.openTable === true` ve uygun vuruş koşulları yoksa `null`.
+ */
+function tryAssignOpenTableFromPotted(
   ctx: RulesContext,
   shooter: PlayerId,
   shot: ShotOutcome,
   balls: BallMeta[],
   pottedMeta: BallMeta[],
-  scratched: boolean,
 ): { player: BallGroup; ai: BallGroup } | null {
   if (!ctx.openTable) return null;
-  if (scratched) return null;
   if (!shot.anyBallMoved || !shot.firstHitId) return null;
 
   const first = balls.find((b) => b.id === shot.firstHitId);
   if (!first || first.kind === 'cue') return null;
 
-  /** If both solids and stripes pocket on one shot, lowest-numbered object ball picks the group (WPA-style). */
   const groupBalls = pottedMeta.filter((b) => b.kind === 'solid' || b.kind === 'stripe');
   if (!groupBalls.length) return null;
   let pottedGroupBall = groupBalls[0]!;
@@ -229,4 +266,16 @@ function assignIfNeeded(
     ctx.playerGroup = group === 'solid' ? 'stripe' : 'solid';
   }
   return { player: ctx.playerGroup!, ai: ctx.aiGroup! };
+}
+
+function assignIfNeeded(
+  ctx: RulesContext,
+  shooter: PlayerId,
+  shot: ShotOutcome,
+  balls: BallMeta[],
+  pottedMeta: BallMeta[],
+  scratched: boolean,
+): { player: BallGroup; ai: BallGroup } | null {
+  if (!ctx.openTable || scratched) return null;
+  return tryAssignOpenTableFromPotted(ctx, shooter, shot, balls, pottedMeta);
 }

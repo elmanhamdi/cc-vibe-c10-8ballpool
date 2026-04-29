@@ -18,4 +18,17 @@ export const AssetIds = {
   soundPocket: 'sound.pool.pocket',
   soundBallsSettle: 'sound.pool.ballsSettle',
   soundBallBall: 'sound.pool.ballBall',
+  /** Sıra rakibe / oyuncuya geçtiğinde (tek seferlik). */
+  soundTurnBell: 'sound.ui.turnBell',
+  /** Maç içi BGM — `GameEngine` her oyunda `bg_2` / `bg_3` arasından rastgele (`music` olayı, loop). */
+  musicBgMatch2: 'sound.ui.bgMatch2',
+  musicBgMatch3: 'sound.ui.bgMatch3',
+  /** Maç sonu / oyunlar arası ekran (loop). */
+  musicBgBetweenGames: 'sound.ui.bgBetweenGames',
+  /** Tung taunt VO (`public/opponents/tung/audio/tung*.ogg`). */
+  soundTungTaunt1: 'sound.opponent.tung.taunt1',
+  soundTungTaunt2: 'sound.opponent.tung.taunt2',
+  soundTungTaunt3: 'sound.opponent.tung.taunt3',
+  /** Geçici silüet; sonra FBX ile değiştirilecek. */
+  opponentTungPlaceholder: 'char.tungPlaceholder',
 } as const;

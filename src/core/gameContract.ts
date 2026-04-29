@@ -6,6 +6,8 @@ export type GameInputCommand =
   | { type: 'menu.restart' }
   | { type: 'menu.next' }
   | { type: 'menu.home' }
+  | { type: 'shop.buyCue'; cueId: string }
+  | { type: 'shop.equipCue'; cueId: string }
   | { type: 'spin.set'; nx: number; ny: number }
   | {
       type: 'pointer.table';

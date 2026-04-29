@@ -66,9 +66,9 @@ export const AI_CAMERA_BLEND_EXP_RETURN = 1.25;
  */
 export const OPENING_BREAK_CAMERA_BLEND_RETURN_EXP = 1.05;
 
-/** Orta ekran reaction beat (portre + satır); HUD `--opp-react-dur` ile aynı. CSS: 2s’te orta plato 1s. */
-export const OPPONENT_REACTION_TTL_MIN_SEC = 2;
-export const OPPONENT_REACTION_TTL_RANDOM_SEC = 0.12;
+/** Orta ekran reaction beat (portre + satır); HUD `--opp-react-dur` ile aynı. CSS: ~2.4–3.0s. */
+export const OPPONENT_REACTION_TTL_MIN_SEC = 2.4;
+export const OPPONENT_REACTION_TTL_RANDOM_SEC = 0.6;
 
 /** Tung 3D: üst (-Z) rail’in biraz gerisi (dünya Z); Y = felt + `OPPONENT_TUNG_WORLD_Y_OFFSET`. */
 export const OPPONENT_TUNG_PLACEHOLDER_PAST_RAIL_Z = 44;

@@ -1,6 +1,7 @@
 import type { GameEvent } from '../world/GameEvents.js';
 import type { AssetManifestEntry } from '../assets/AssetTypes.js';
 import { AssetManifest } from '../assets/AssetManifest.js';
+import { AssetIds } from '../assets/AssetIds.js';
 import { resolveBrowserAssetUrl } from '../assets/resolveBrowserAssetUrl.js';
 
 export type BrowserAudioAdapterOptions = {
@@ -10,9 +11,29 @@ export type BrowserAudioAdapterOptions = {
 const AUDIO_EXTS = ['ogg', 'mp3', 'wav'] as const;
 
 /** Arka plan seviyesi (GainNode, linear 0–1). */
-const BGM_VOLUME = 0.14;
+const BGM_BASE_VOLUME = 0.14;
 /** Arka plan çalma hızı — Web Audio `playbackRate` ile uygulanır (pitch birlikte değişir). */
-const BGM_PLAYBACK_RATE = 0.6;
+const BGM_BASE_PLAYBACK_RATE = 0.6;
+const BGM_OVERRIDES: Record<
+  string,
+  {
+    volume?: number;
+    playbackRate?: number;
+  }
+> = {
+  [AssetIds.musicBgBetweenGames]: {
+    playbackRate: 1,
+    volume: 0.18,
+  },
+};
+
+function bgmSettings(musicId: string): { volume: number; playbackRate: number } {
+  const o = BGM_OVERRIDES[musicId] ?? {};
+  return {
+    volume: o.volume ?? BGM_BASE_VOLUME,
+    playbackRate: o.playbackRate ?? BGM_BASE_PLAYBACK_RATE,
+  };
+}
 /** Tek seferlik sesler: motor `volume` × bu katsayı. */
 const SFX_MASTER_GAIN = 0.7;
 
@@ -106,7 +127,7 @@ export class BrowserAudioAdapter {
     }
     this.bgmCtx = new Ctor();
     this.bgmGain = this.bgmCtx.createGain();
-    this.bgmGain.gain.value = BGM_VOLUME;
+    this.bgmGain.gain.value = BGM_BASE_VOLUME;
     this.bgmGain.connect(this.bgmCtx.destination);
     return this.bgmCtx;
   }
@@ -197,11 +218,13 @@ export class BrowserAudioAdapter {
 
         this.stopBgmSource();
         if (!this.bgmGain) return;
+        const set = bgmSettings(musicId);
+        this.bgmGain.gain.value = set.volume;
 
         const src = ctx.createBufferSource();
         src.buffer = buf;
         src.loop = true;
-        src.playbackRate.value = BGM_PLAYBACK_RATE;
+        src.playbackRate.value = set.playbackRate;
         src.connect(this.bgmGain);
         src.start(0);
         this.bgmSource = src;
@@ -223,15 +246,16 @@ export class BrowserAudioAdapter {
     }
     const entry = AssetManifest[musicId as keyof typeof AssetManifest];
     if (!entry || entry.kind !== 'audio') return;
+    const set = bgmSettings(musicId);
     const { stem, exts } = audioStemAndOrder(entry);
     const tryAt = (i: number): void => {
       if (i >= exts.length) return;
       const url = resolveBrowserAssetUrl(this.assetBaseUrl, `${stem}.${exts[i]}`);
       const a = new Audio();
       a.loop = true;
-      a.volume = BGM_VOLUME;
+      a.volume = set.volume;
       const applyRate = () => {
-        a.playbackRate = BGM_PLAYBACK_RATE;
+        a.playbackRate = set.playbackRate;
       };
       applyRate();
       a.addEventListener('loadeddata', applyRate, { once: true });

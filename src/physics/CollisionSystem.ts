@@ -6,8 +6,8 @@ import { Vec2 } from './Vec2.js';
 const RESTITUTION = 0.94;
 const CUSHION_RESTITUTION = 0.88;
 const FRICTION = 1.35;
-const ENGLISH_DECAY = 1.8;
-const CURL_STRENGTH = 0.55;
+const ENGLISH_DECAY = 0.32;
+const CURL_STRENGTH = 3.8;
 const STOP_EPS = 0.012;
 const MAX_SUBSTEPS = 6;
 /** Min relative speed along normal (|dot|) to count as audible ball–ball hit (avoids resting jitter). */
@@ -33,6 +33,10 @@ const tmpA = new Vec2();
 const tmpB = new Vec2();
 const tmpN = new Vec2();
 const tmpCueHand = new Vec2();
+
+function clampUnit(v: number): number {
+  return Math.max(-1, Math.min(1, v));
+}
 
 
 export class CollisionSystem {
@@ -183,11 +187,13 @@ export class CollisionSystem {
   }
 
   applyShot(angle: number, power01: number, spinX: number, spinY: number): void {
-    const speed = 520 * (0.25 + 0.75 * power01);
+    const speed = 700 * (0.25 + 0.75 * power01);
     const c = Math.cos(angle);
     const s = Math.sin(angle);
     this.cue.vel.set(c * speed, s * speed);
-    this.cue.english.set(spinX, spinY);
+    const sx = clampUnit(spinX);
+    const sy = clampUnit(spinY);
+    this.cue.english.set(sx, sy);
   }
 
   /** Call after `applyShot` to start incremental simulation. */
@@ -295,7 +301,7 @@ export class CollisionSystem {
 
   private integrateEnglish(b: Ball, h: number, outcome: ShotOutcome): void {
     if (b.kind !== 'cue' || !b.active) return;
-    const sp = b.speed();
+    const sp = Math.min(b.speed(), 1100);
     if (sp < 1e-3) return;
     if (sp > STOP_EPS) outcome.anyBallMoved = true;
     const dir = tmpA.copy(b.vel).normalize();
@@ -303,9 +309,9 @@ export class CollisionSystem {
     const curl = CURL_STRENGTH * b.english.x;
     b.vel.add(perp.scale(curl * sp * h));
     const roll = b.english.y;
-    const forward = tmpA.copy(dir).scale(roll * 0.35 * FRICTION * h);
+    const forward = tmpA.copy(dir).scale(roll * 2.8 * FRICTION * h);
     b.vel.add(forward);
-    const decay = Math.exp(-ENGLISH_DECAY * h * (0.35 + sp * 0.002));
+    const decay = Math.exp(-ENGLISH_DECAY * h * (0.1 + sp * 0.00045));
     b.english.scale(decay);
   }
 
@@ -350,10 +356,10 @@ export class CollisionSystem {
             outcome.firstHitId = other.id;
           }
           const tangent = tmpA.set(-tmpN.y, tmpN.x);
-          const englishBoost = 18 * h * 60;
+          const englishBoost = 160 * h * 60;
           if (cue.kind === 'cue') {
-            cue.vel.add(tangent.scale(cue.english.x * englishBoost * 0.02));
-            cue.vel.add(tmpN.clone().scale(cue.english.y * englishBoost * 0.015));
+            cue.vel.add(tangent.scale(cue.english.x * englishBoost * 0.12));
+            cue.vel.add(tmpN.clone().scale(cue.english.y * englishBoost * 0.2));
           }
         }
       }
@@ -393,7 +399,7 @@ export class CollisionSystem {
     const vn = Vec2.dot(b.vel, tmpN);
     if (vn < 0) {
       const tang = tmpA.set(-tmpN.y, tmpN.x);
-      const englishKick = b.kind === 'cue' ? b.english.x * 0.22 : 0;
+      const englishKick = b.kind === 'cue' ? b.english.x * 1.5 : 0;
       b.vel.sub(tmpN.clone().scale((1 + CUSHION_RESTITUTION) * vn));
       b.vel.add(tang.scale(englishKick));
       if (b.kind !== 'cue') this.breakCushionBallIds.add(b.id);

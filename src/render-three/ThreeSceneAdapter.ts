@@ -15,6 +15,8 @@ const TABLE_MESH_Y_THICKNESS_MUL = 1.4;
 
 /** Masa + toplar + çizgileri Y’de yukarı (world birimi); HUD altında daha merkezli görünür. */
 const TABLE_SCENE_Y_LIFT = 24;
+/** Sadece görsel masayı biraz yukarı kaldırmak için ekstra ofset. */
+const TABLE_GROUP_Y_VISUAL_OFFSET = 4;
 
 /**
  * Fizikle uyumlu oyun düzlemi: top merkezi y ≈ radius + 0.15 (varsayılan radius 9 → 9.15).
@@ -33,12 +35,12 @@ const FLOOR_EXTEND_MUL = 2.75;
 
 /** Tung container local: duvar masadan uzakta (−Z), düzlem XY (Y yukarı). */
 const TUNG_BACK_WALL_LOCAL_Z = -400;
-const TUNG_BACK_WALL_WIDTH_TABLE_MUL = 5.68;
-const TUNG_BACK_WALL_HEIGHT_MODEL_MUL = 4.4;
+const TUNG_BACK_WALL_WIDTH_TABLE_MUL = 22.72;
+const TUNG_BACK_WALL_HEIGHT_MODEL_MUL = 17.6;
 /** Duvarı biraz aşağı kaydır (Y azalır). */
 const TUNG_BACK_WALL_Y_PULL_DOWN = 56;
-const TUNG_BACK_WALL_TEX_REPEAT_X = 10.4;
-const TUNG_BACK_WALL_TEX_REPEAT_Y = 13.6;
+const TUNG_BACK_WALL_TEX_REPEAT_X = 41.6;
+const TUNG_BACK_WALL_TEX_REPEAT_Y = 54.4;
 
 export type ThreeSceneAdapterOptions = {
   /** Vite `import.meta.env.BASE_URL` for `public/` textures and GLB fallbacks. */
@@ -348,6 +350,7 @@ export class ThreeSceneAdapter {
       this.scene.background = new THREE.Color(state.ambientColorHex);
     }
     this.tableGroup.visible = !hints.debugHideTableMesh;
+    this.applyCueStyle(state.opponentCueId);
     this.applyCamera(state.camera);
     this.syncWorldObjects(state.objects, dt);
     this.syncPolylines(state.polylines);
@@ -402,6 +405,36 @@ export class ThreeSceneAdapter {
     const w = this.physicsTable.width;
     /** +X ≈ sağ; negatif Y ofseti = ikon biraz daha aşağı. */
     sprite.position.set(bx + w * 0.036, by + w * -0.008 + bob, bz);
+  }
+
+  private applyCueStyle(cueId?: string): void {
+    if (!this.cueShaft) return;
+    const shaftMat = this.cueShaft.material as THREE.MeshStandardMaterial;
+    let color = 0x6b4423;
+    switch (cueId) {
+      case 'street':
+        color = 0xb58b5a;
+        break;
+      case 'pro':
+        color = 0x5cf0c2;
+        break;
+      case 'neon':
+        color = 0xff6f91;
+        break;
+      case 'carbon':
+        color = 0x66b6ff;
+        break;
+      case 'legend':
+        color = 0xf4d35e;
+        break;
+      default:
+        color = 0x6b4423;
+        break;
+    }
+    if (shaftMat.color.getHex() !== color) {
+      shaftMat.color.setHex(color);
+      shaftMat.needsUpdate = true;
+    }
   }
 
   private applyCamera(cam: RenderWorldState['camera']): void {
@@ -812,7 +845,7 @@ export class ThreeSceneAdapter {
     root.updateMatrixWorld(true);
     const box2 = new THREE.Box3().setFromObject(root);
     root.position.set(-(box2.min.x + box2.max.x) * 0.5, -box2.max.y, -(box2.min.z + box2.max.z) * 0.5);
-    this.tableGroup.position.y = TABLE_SCENE_Y_LIFT;
+    this.tableGroup.position.y = TABLE_SCENE_Y_LIFT + TABLE_GROUP_Y_VISUAL_OFFSET;
     this.tableGroup.add(root);
   }
 
@@ -838,6 +871,7 @@ export class ThreeSceneAdapter {
     );
     felt.rotation.x = -Math.PI / 2;
     felt.receiveShadow = true;
+    this.tableGroup.position.y = TABLE_SCENE_Y_LIFT + TABLE_GROUP_Y_VISUAL_OFFSET;
     this.tableGroup.add(felt);
 
     const railRubber = new THREE.MeshStandardMaterial({

@@ -7,9 +7,20 @@ export const CAREER_OPPONENTS: AICharacterProfile[] = [
     name: 'Tung',
     tier: 'apprentice',
     personality: 'funny',
-    accuracy: 0.35,
-    risk: 0.25,
-    pace: 1.15,
+    accuracy: 0.42,
+    risk: 0.18,
+    pace: 1.05,
+    cueId: 'street',
+  },
+  {
+    id: 'balleeina',
+    name: 'Balleeina',
+    tier: 'beginner',
+    personality: 'calm',
+    accuracy: 0.42,
+    risk: 0.28,
+    pace: 1.08,
+    cueId: 'classic',
   },
   {
     id: 'elif',
@@ -19,6 +30,7 @@ export const CAREER_OPPONENTS: AICharacterProfile[] = [
     accuracy: 0.48,
     risk: 0.32,
     pace: 1.05,
+    cueId: 'street',
   },
   {
     id: 'burak',
@@ -28,6 +40,7 @@ export const CAREER_OPPONENTS: AICharacterProfile[] = [
     accuracy: 0.58,
     risk: 0.55,
     pace: 0.95,
+    cueId: 'pro',
   },
   {
     id: 'deniz',
@@ -37,6 +50,7 @@ export const CAREER_OPPONENTS: AICharacterProfile[] = [
     accuracy: 0.68,
     risk: 0.45,
     pace: 0.85,
+    cueId: 'neon',
   },
   {
     id: 'arda',
@@ -46,6 +60,7 @@ export const CAREER_OPPONENTS: AICharacterProfile[] = [
     accuracy: 0.76,
     risk: 0.62,
     pace: 0.78,
+    cueId: 'carbon',
   },
   {
     id: 'selin',
@@ -55,6 +70,7 @@ export const CAREER_OPPONENTS: AICharacterProfile[] = [
     accuracy: 0.84,
     risk: 0.58,
     pace: 0.7,
+    cueId: 'legend',
   },
   {
     id: 'emir',
@@ -64,5 +80,6 @@ export const CAREER_OPPONENTS: AICharacterProfile[] = [
     accuracy: 0.92,
     risk: 0.7,
     pace: 0.62,
+    cueId: 'legend',
   },
 ];

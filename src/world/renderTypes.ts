@@ -84,11 +84,30 @@ export interface RenderWorldState {
   cuePullHandHint?: boolean;
   /** Oyuncu beyazı sürükleyerek yerleştirirken el ikonu + tarayıcı imleci. */
   cueBallInHandCursorHint?: boolean;
+  /** Optional cue id for opponent shot preview. */
+  opponentCueId?: string;
 }
 
 export type PotHudState =
   | { kind: 'open'; solids: number[]; stripes: number[] }
   | { kind: 'assigned'; player: number[]; ai: number[] };
+
+export interface ProfileHudView {
+  coins: number;
+  wins: number;
+  losses: number;
+  winRate: number;
+  currentStreak: number;
+  bestStreak: number;
+  rankName: string;
+  rankIndex: number;
+  nextRankName: string | null;
+  nextRankAtWins: number | null;
+  rankProgress01: number;
+  ownedCueIds: readonly string[];
+  equippedCueId: string;
+  equippedCueStats?: { power: number; aim: number; spin: number };
+}
 
 /** HUD view model — DOM/XAML adapters bind to this only. */
 export interface HudState {
@@ -98,6 +117,8 @@ export interface HudState {
   boostPercent: number;
   visiblePanels: readonly string[];
   prompts: readonly { id: string; text: string; priority: number }[];
+  profile?: ProfileHudView;
+  coinRewardWin?: number;
   /** 8-ball–specific fields for the browser HUD implementation. */
   eightBall?: {
     phase: string;
@@ -135,4 +156,21 @@ export interface HudState {
       beatId: number;
     };
   };
+  nextOpponent?: {
+    id: string;
+    name: string;
+    tier: string;
+  };
+  shop?: {
+    catalog: readonly {
+      id: string;
+      name: string;
+      price: number;
+      description?: string;
+      accent?: string;
+      stats?: { power: number; aim: number; spin: number };
+    }[];
+  };
+  /** Oyuncu beyazı sürükleyerek yerleştirirken cursor/ikon ipucu. */
+  cueBallInHandCursorHint?: boolean;
 }

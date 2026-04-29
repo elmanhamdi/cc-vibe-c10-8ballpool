@@ -12,7 +12,7 @@ import {
 } from '../gameplay/RulesEngine.js';
 import { AIController, type AIShotPlan } from '../ai/AIController.js';
 import { CAREER_OPPONENTS } from '../ai/AICharacters.js';
-import { tungReactionPortraitAssetIdForLine } from '../opponents/tungReactions.js';
+import { TUNG_DEFAULT_REACTION_ASSET_ID, tungReactionPortraitAssetIdForLine } from '../opponents/tungReactions.js';
 import type { AICharacterProfile } from '../ai/types.js';
 import { DialogueManager } from '../systems/DialogueManager.js';
 import type { DialogueCategory } from '../systems/dialogueLines.js';
@@ -55,7 +55,12 @@ import {
 import { PoolInputState } from './PoolInputState.js';
 import { transformAt, uniformScale, vec3 } from '../world/Transform.js';
 import type { BallKind } from '../physics/Ball.js';
+import type { PlayerProfile, ProfileView } from './Profile.js';
+import { COIN_REWARD_WIN, computeRank, defaultProfile, hydrateProfile } from './Profile.js';
+import { SHOP_CUE_CATALOG } from './ShopCatalog.js';
 import { Vec2 } from '../physics/Vec2.js';
+
+const PROFILE_STORAGE_KEY = 'vertical-eight-ball.profile.v1';
 
 /** Shortest-path lerp on the circle (radians). */
 function lerpAngleRad(from: number, to: number, t: number): number {
@@ -123,6 +128,7 @@ export class GameEngine implements Game {
     toY: number;
     t: number;
   } | null = null;
+  private profile: PlayerProfile = defaultProfile();
 
   /** Center “reaction portrait” moment (TTL); cleared with match / dialogue tick cadence. */
   private opponentReaction: {
@@ -142,11 +148,14 @@ export class GameEngine implements Game {
     this.table = options?.table ?? new Table();
     this.physics = new CollisionSystem(this.table, ballRadius);
     this.ai = new AIController(CAREER_OPPONENTS[0]!);
+    this.profile = this.loadProfileFromStorage();
+    this.ensureEquippedStats();
     this.beginCareer(0);
   }
 
   reset(seed?: number): void {
     void seed;
+    this.ensureEquippedStats();
     this.beginCareer(this.levelIndex);
   }
 
@@ -164,13 +173,119 @@ export class GameEngine implements Game {
     this.eventQueue.push({ type: 'music', musicId, action: 'start' });
   }
 
-  private pickRandomMatchBgmId(): string {
-    return Math.random() < 0.5 ? AssetIds.musicBgMatch2 : AssetIds.musicBgMatch3;
+  private loadProfileFromStorage(): PlayerProfile {
+    try {
+      if (typeof localStorage === 'undefined') return defaultProfile();
+      const raw = localStorage.getItem(PROFILE_STORAGE_KEY);
+      if (!raw) return defaultProfile();
+      const parsed = JSON.parse(raw) as unknown;
+      return hydrateProfile(parsed);
+    } catch {
+      return defaultProfile();
+    }
+  }
+
+  private saveProfileToStorage(): void {
+    try {
+      if (typeof localStorage === 'undefined') return;
+      localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(this.profile));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  private profileView(): ProfileView {
+    const p = this.profile;
+    const rank = computeRank(p.wins);
+    const total = p.wins + p.losses;
+    const winRate = total > 0 ? p.wins / total : 0;
+    return {
+      ...p,
+      rank,
+      winRate,
+    };
+  }
+
+  private findCue(cueId: string) {
+    return SHOP_CUE_CATALOG.find((c) => c.id === cueId);
+  }
+
+  private buyCue(cueId: string): boolean {
+    const item = this.findCue(cueId);
+    if (!item) return false;
+    const p = this.profile;
+    if (p.ownedCueIds.includes(cueId)) return false;
+    if (p.coins < item.price) return false;
+    p.coins -= item.price;
+    p.ownedCueIds.push(cueId);
+    this.saveProfileToStorage();
+    return true;
+  }
+
+  /** Debug helper: grant coins immediately. */
+  debugGrantCoins(amount: number): void {
+    const p = this.profile;
+    p.coins = Math.max(0, p.coins + Math.floor(amount));
+    this.saveProfileToStorage();
+  }
+
+  /** Debug helper: own all cues and equip the priciest one. */
+  debugOwnAllCues(): void {
+    const p = this.profile;
+    for (const cue of SHOP_CUE_CATALOG) {
+      if (!p.ownedCueIds.includes(cue.id)) {
+        p.ownedCueIds.push(cue.id);
+      }
+    }
+    const richest = [...SHOP_CUE_CATALOG].sort((a, b) => b.price - a.price)[0];
+    if (richest) {
+      p.equippedCueId = richest.id;
+      p.equippedCueStats = richest.stats ? { ...richest.stats } : undefined;
+    }
+    this.saveProfileToStorage();
+  }
+
+  private equipCue(cueId: string): boolean {
+    const p = this.profile;
+    if (!p.ownedCueIds.includes(cueId)) return false;
+    p.equippedCueId = cueId;
+    // cache equipped stats for quick read; fallback to classic stats when missing
+    const stats = this.findCue(cueId)?.stats ?? this.findCue('classic')?.stats;
+    p.equippedCueStats = stats ? { ...stats } : undefined;
+    this.saveProfileToStorage();
+    return true;
+  }
+
+  private ensureEquippedStats(): void {
+    const p = this.profile;
+    const stats = this.findCue(p.equippedCueId)?.stats ?? this.findCue('classic')?.stats;
+    p.equippedCueStats = stats ? { ...stats } : undefined;
+  }
+
+  private applyMatchResult(res: TurnResolution): void {
+    const playerWon = res.playerWon === true;
+    const playerLost = res.playerLost === true;
+    if (!playerWon && !playerLost) return;
+    const p = this.profile;
+    if (playerWon) {
+      p.coins += COIN_REWARD_WIN;
+      p.wins += 1;
+      p.currentStreak += 1;
+      if (p.currentStreak > p.bestStreak) p.bestStreak = p.currentStreak;
+    } else if (playerLost) {
+      p.losses += 1;
+      p.currentStreak = 0;
+    }
+    this.saveProfileToStorage();
   }
 
   /** Oyuncu beyaz yerleştirirken canvas `cursor` için (main loop). */
   isAwaitingPlayerBallInHand(): boolean {
     return this.awaitingBallInHandPlacement && this.phase === 'PlayerTurn' && this.physics.cue.active;
+  }
+
+  private pickRandomMatchBgmId(): string {
+    return Math.random() < 0.5 ? AssetIds.musicBgMatch2 : AssetIds.musicBgMatch3;
   }
 
   getOpponent(): AICharacterProfile {
@@ -228,6 +343,10 @@ export class GameEngine implements Game {
   private requestPlayerShot(angle: number, power01: number, spinX: number, spinY: number): boolean {
     if (this.phase !== 'PlayerTurn') return false;
     if (!this.physics.cue.active) return false;
+    const cueStats = this.findCue(this.profile.equippedCueId)?.stats ?? { power: 1, aim: 1, spin: 1 };
+    power01 = Math.max(0.1, Math.min(1, power01 * cueStats.power));
+    spinX = Math.max(-1, Math.min(1, spinX * cueStats.spin));
+    spinY = Math.max(-1, Math.min(1, spinY * cueStats.spin));
     this.activeShotIsOpeningBreak = this.awaitingFirstPlayerBreakShot;
     if (this.awaitingFirstPlayerBreakShot) {
       this.awaitingFirstPlayerBreakShot = false;
@@ -252,6 +371,13 @@ export class GameEngine implements Game {
         cue: this.physics.cue,
         rules: this.rulesCtx,
       });
+    // attach opponent cue id for rendering preview + apply cue stats
+    const opp = this.getOpponent();
+    const cueStats = this.findCue(opp.cueId ?? '')?.stats ?? { power: 1, aim: 1, spin: 1 };
+    plan.cueId = opp.cueId;
+    plan.power01 = Math.max(0.18, Math.min(1, plan.power01 * cueStats.power));
+    plan.spinX = Math.max(-1, Math.min(1, plan.spinX * cueStats.spin));
+    plan.spinY = Math.max(-1, Math.min(1, plan.spinY * cueStats.spin));
     this.pendingAI = null;
     this.activeShotIsOpeningBreak = false;
     if (this.awaitingFirstAiShot) this.awaitingFirstAiShot = false;
@@ -407,6 +533,8 @@ export class GameEngine implements Game {
       this.awaitingBallInHandPlacement = false;
       this.ballInHandDragging = false;
       this.aiCueBallPlacementSlide = null;
+      this.applyMatchResult(res);
+      if (res.playerWon) this.pushSound(AssetIds.soundApplause, 0.6);
       this.opponentReaction = null;
       this.pushMusicStart(AssetIds.musicBgBetweenGames);
       return;
@@ -650,6 +778,7 @@ export class GameEngine implements Game {
     const pot = this.getPotHudState();
     const potTargets = this.getPotTargetLabels();
     const eightPocketed = !this.physics.balls.some((b) => b.kind === 'eight' && b.active);
+    const profile = this.profileView();
     const prompts: { id: string; text: string; priority: number }[] = [];
     if (this.awaitingBallInHandPlacement && this.phase === 'PlayerTurn') {
       prompts.push({
@@ -667,6 +796,11 @@ export class GameEngine implements Game {
     if (snap.phase === 'MatchEnd') panels.push('end');
     if (snap.phase !== 'MainMenu' && snap.phase !== 'MatchEnd') panels.push('hud');
 
+    const nextOpponentProfile =
+      CAREER_OPPONENTS[
+        Math.min(this.levelIndex + 1, CAREER_OPPONENTS.length - 1)
+      ];
+
     return {
       scoreText: meta.reason,
       timerText: '',
@@ -674,6 +808,34 @@ export class GameEngine implements Game {
       boostPercent: 0,
       visiblePanels: panels,
       prompts,
+      coinRewardWin: COIN_REWARD_WIN,
+      profile: {
+        coins: profile.coins,
+        wins: profile.wins,
+        losses: profile.losses,
+        winRate: profile.winRate,
+        currentStreak: profile.currentStreak,
+        bestStreak: profile.bestStreak,
+        rankName: profile.rank.name,
+        rankIndex: profile.rank.index,
+        nextRankName: profile.rank.nextName,
+        nextRankAtWins: profile.rank.nextAtWins,
+        rankProgress01: profile.rank.progress01,
+        ownedCueIds: profile.ownedCueIds,
+        equippedCueId: profile.equippedCueId,
+        equippedCueStats: this.profile.equippedCueStats,
+      },
+      shop: {
+        catalog: SHOP_CUE_CATALOG,
+      },
+      nextOpponent:
+        nextOpponentProfile != null
+          ? {
+              id: nextOpponentProfile.id,
+              name: nextOpponentProfile.name,
+              tier: nextOpponentProfile.tier,
+            }
+          : undefined,
       eightBall: {
         phase: snap.phase,
         levelIndex: snap.levelIndex,
@@ -708,6 +870,8 @@ export class GameEngine implements Game {
             }
           : null,
       },
+      cueBallInHandCursorHint:
+        this.awaitingBallInHandPlacement && this.phase === 'PlayerTurn' && this.physics.cue.active,
     };
   }
 
@@ -847,7 +1011,8 @@ export class GameEngine implements Game {
       });
     }
 
-    if (this.phase !== 'MainMenu' && this.phase !== 'MatchEnd') {
+    const opponentId = this.getOpponent().id;
+    if (this.phase !== 'MainMenu' && this.phase !== 'MatchEnd' && opponentId === 'tung') {
       const feltY = cue.radius + 0.15 + OPPONENT_TUNG_WORLD_Y_OFFSET;
       const tz = -(th * 0.5) - OPPONENT_TUNG_PLACEHOLDER_PAST_RAIL_Z;
       objects.push({
@@ -971,6 +1136,7 @@ export class GameEngine implements Game {
       ambientColorHex: '#0b0f14',
       cuePullHandHint,
       cueBallInHandCursorHint,
+      opponentCueId: this.getOpponent().cueId,
     };
   }
 
@@ -1031,8 +1197,49 @@ export class GameEngine implements Game {
         this.beginCareer(this.levelIndex);
       } else if (c.type === 'menu.home') {
         this.beginCareer(this.levelIndex);
+      } else if (c.type === 'shop.buyCue') {
+        this.buyCue(c.cueId);
+      } else if (c.type === 'shop.equipCue') {
+        this.equipCue(c.cueId);
       }
     }
+  }
+
+  /** Debug: immediately show a reaction beat (portrait + line). */
+  debugShowReaction(): void {
+    if (this.phase === 'MatchEnd') return;
+    const ttl = OPPONENT_REACTION_TTL_MIN_SEC + Math.random() * Math.max(0.01, OPPONENT_REACTION_TTL_RANDOM_SEC);
+    this.opponentReactionBeatSeq += 1;
+    const opp = this.getOpponent();
+    const portraitAssetId = opp.id === 'tung' ? TUNG_DEFAULT_REACTION_ASSET_ID : null;
+    this.opponentReaction = {
+      text: 'Debug reaction',
+      ttl,
+      durationTotal: ttl,
+      beatId: this.opponentReactionBeatSeq,
+      portraitAssetId,
+    };
+    this.dialogue.clearBubble();
+    this.dialogue.alignBubbleTtl(ttl);
+    if (opp.id === 'tung' && portraitAssetId != null) {
+      this.playRandomTungTauntSound();
+    }
+  }
+
+  /** Debug: end match immediately as win/lose for the player. */
+  debugForceMatchEnd(playerWins: boolean): void {
+    if (this.phase === 'MatchEnd') return;
+    const res: TurnResolution = {
+      nextTurn: 'player',
+      continueWithSamePlayer: false,
+      foul: 'none',
+      playerWon: playerWins,
+      playerLost: !playerWins,
+      reason: playerWins ? 'Debug win' : 'Debug loss',
+      respawnCueInKitchen: false,
+      assignedGroup: null,
+    };
+    this.resolveTurn(res, 'player', undefined);
   }
 }
 

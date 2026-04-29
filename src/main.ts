@@ -28,6 +28,30 @@ const cameraDebug = new CameraDebugToggle(gameRoot);
 const tableMeshDebug = new TableMeshDebugToggle();
 const opponentShotCameraDebug = new OpponentShotCameraToggle();
 
+window.addEventListener('keydown', (e) => {
+  if (e.repeat) return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const el = e.target as HTMLElement | null;
+  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+  if (engine.phase === 'MatchEnd') return;
+  if (e.key === '1') {
+    e.preventDefault();
+    engine.debugForceMatchEnd(true);
+  } else if (e.key === '2') {
+    e.preventDefault();
+    engine.debugForceMatchEnd(false);
+  } else if (e.key === '3') {
+    e.preventDefault();
+    engine.debugShowReaction();
+  } else if (e.key.toLowerCase() === 'g') {
+    e.preventDefault();
+    engine.debugGrantCoins(999);
+  } else if (e.key.toLowerCase() === 'h') {
+    e.preventDefault();
+    engine.debugOwnAllCues();
+  }
+});
+
 const hudAdapter = new BrowserHudAdapter(
   hudLayer,
   engine,

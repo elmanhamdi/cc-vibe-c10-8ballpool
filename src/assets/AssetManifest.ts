@@ -101,6 +101,14 @@ export const AssetManifest = {
     futureMhsPath: '@UI/Opponents/TungReactions/Sad.png',
     sourceFormat: 'png',
   },
+  'ui.opponent.balleeina.avatar': {
+    id: 'ui.opponent.balleeina.avatar',
+    kind: 'ui',
+    browserUrl: 'opponents/balleeina/hud/avatar.png',
+    futureMhsPath: '@UI/Opponents/BalleeinaAvatar.png',
+    sourceFormat: 'png',
+    notes: 'If missing, HUD falls back to generic avatar.',
+  },
 
   'ui.avatar.genericOpponent': {
     id: 'ui.avatar.genericOpponent',
@@ -174,6 +182,22 @@ export const AssetManifest = {
     futureMhsPath: '@Assets/Audio/BgBetweenGames',
     sourceFormat: 'ogg',
     notes: 'Looping between matches (MatchEnd overlay).',
+  },
+  'sound.ui.applause': {
+    id: 'sound.ui.applause',
+    kind: 'audio',
+    browserUrl: 'audio/applause.ogg',
+    futureMhsPath: '@Assets/Audio/Applause',
+    sourceFormat: 'ogg',
+    notes: 'One-shot applause on player victory.',
+  },
+  'sound.ui.phoneRing': {
+    id: 'sound.ui.phoneRing',
+    kind: 'audio',
+    browserUrl: 'audio/phonering.ogg',
+    futureMhsPath: '@Assets/Audio/PhoneRing',
+    sourceFormat: 'ogg',
+    notes: 'Looped while searching for next opponent.',
   },
   'sound.ui.turnBell': {
     id: 'sound.ui.turnBell',

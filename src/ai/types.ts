@@ -20,4 +20,6 @@ export interface AICharacterProfile {
   risk: number;
   /** Multiplier on thinking delay (lower = faster). */
   pace: number;
+  /** Cue id from shared catalog. */
+  cueId?: string;
 }

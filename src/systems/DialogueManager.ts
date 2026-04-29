@@ -44,7 +44,7 @@ export class DialogueManager {
     const line = pickWeighted(lines);
     if (!line) return null;
 
-    this.current = { text: line.text, ttl: 2.2 + Math.random() * 1.1 };
+    this.current = { text: line.text, ttl: 3.8 + Math.random() * 1.4 };
     this.cd.global = this.globalGap;
     this.cd.byCategory[category] = this.categoryGap[category] ?? 2.4;
     return line.text;

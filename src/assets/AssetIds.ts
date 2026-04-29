@@ -25,6 +25,10 @@ export const AssetIds = {
   musicBgMatch3: 'sound.ui.bgMatch3',
   /** Maç sonu / oyunlar arası ekran (loop). */
   musicBgBetweenGames: 'sound.ui.bgBetweenGames',
+  /** Win applause one-shot. */
+  soundApplause: 'sound.ui.applause',
+  /** Next-match ringing cue (looped in HUD popup). */
+  soundPhoneRing: 'sound.ui.phoneRing',
   /** Tung taunt VO (`public/opponents/tung/audio/tung*.ogg`). */
   soundTungTaunt1: 'sound.opponent.tung.taunt1',
   soundTungTaunt2: 'sound.opponent.tung.taunt2',

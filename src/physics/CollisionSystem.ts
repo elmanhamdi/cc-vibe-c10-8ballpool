@@ -3,9 +3,11 @@ import type { CushionSegment } from './Table.js';
 import { Table } from './Table.js';
 import { Vec2 } from './Vec2.js';
 
-const RESTITUTION = 0.94;
+/** Higher = livelier ball–ball spread (e.g. break). */
+const RESTITUTION = 0.985;
 const CUSHION_RESTITUTION = 0.88;
-const FRICTION = 1.35;
+/** Lower = less drag so clusters break apart more visibly. */
+const FRICTION = 1.05;
 const ENGLISH_DECAY = 0.32;
 const CURL_STRENGTH = 3.8;
 const STOP_EPS = 0.012;
@@ -187,7 +189,8 @@ export class CollisionSystem {
   }
 
   applyShot(angle: number, power01: number, spinX: number, spinY: number): void {
-    const speed = 700 * (0.25 + 0.75 * power01);
+    /** Global cue strength (was 1000; slightly softer strokes overall). */
+    const speed = 830 * (0.18 + 0.82 * power01);
     const c = Math.cos(angle);
     const s = Math.sin(angle);
     this.cue.vel.set(c * speed, s * speed);
@@ -438,6 +441,14 @@ export class CollisionSystem {
   }
 }
 
+/** Imperfect rack: tiny random offset per object ball (within gap between touching neighbors). */
+function rackMicroJitter(r: number): { jx: number; jy: number } {
+  return {
+    jx: (Math.random() - 0.5) * r * 0.042,
+    jy: (Math.random() - 0.5) * r * 0.036,
+  };
+}
+
 function createRack(table: Table, r: number): Ball[] {
   const balls: Ball[] = [];
   let id = 0;
@@ -460,17 +471,20 @@ function createRack(table: Table, r: number): Ball[] {
     [13, 6, 14, 15, 7],
   ];
 
+  const rowMax = layout.length - 1;
   for (let row = 0; row < layout.length; row++) {
     const nums = layout[row]!;
     const count = nums.length;
-    const y = cy + row * dy;
+    /** Apex (1-ball) toward break side / player — rows increase away from cue (cue at high Y). */
+    const y = cy + (rowMax - row) * dy;
     const rowW = (count - 1) * dx;
     const startX = cx - rowW * 0.5;
     for (let c = 0; c < count; c++) {
       const num = nums[c]!;
       const kind: Ball['kind'] =
         num === 0 ? 'cue' : num === 8 ? 'eight' : num < 8 ? 'solid' : 'stripe';
-      add(num, kind, startX + c * dx, y);
+      const { jx, jy } = rackMicroJitter(r);
+      add(num, kind, startX + c * dx + jx, y + jy);
     }
   }
 

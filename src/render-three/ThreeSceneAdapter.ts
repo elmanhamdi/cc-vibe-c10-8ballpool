@@ -19,7 +19,7 @@ const TABLE_SCENE_Y_LIFT = 24;
 const TABLE_GROUP_Y_VISUAL_OFFSET = 4;
 
 /**
- * Fizikle uyumlu oyun düzlemi: top merkezi y ≈ radius + 0.15 (varsayılan radius 9 → 9.15).
+ * Fizikle uyumlu oyun düzlemi: top merkezi y ≈ radius + 0.15 (varsayılan radius 8.1 → ~8.25).
  * screen→table ışını bu yükseklikte kesilir.
  */
 const TABLE_PLAY_SURFACE_LOCAL_Y = 9.15;
@@ -41,6 +41,11 @@ const TUNG_BACK_WALL_HEIGHT_MODEL_MUL = 17.6;
 const TUNG_BACK_WALL_Y_PULL_DOWN = 56;
 const TUNG_BACK_WALL_TEX_REPEAT_X = 41.6;
 const TUNG_BACK_WALL_TEX_REPEAT_Y = 54.4;
+
+/** Pocket drop VFX: slide toward pocket center, then fall + shrink (render-only). */
+const POCKET_SLIDE_SEC = 0.12;
+const POCKET_DROP_SEC = 0.2;
+const POCKET_DROP_DEPTH_R = 3.2;
 
 export type ThreeSceneAdapterOptions = {
   /** Vite `import.meta.env.BASE_URL` for `public/` textures and GLB fallbacks. */
@@ -67,6 +72,19 @@ export class ThreeSceneAdapter {
   /** Per-ball rolling quaternion (render); integrated from `tableVelocity` + real frame dt. */
   private readonly ballRollQuat = new Map<string, THREE.Quaternion>();
   private readonly ballLastPos = new Map<string, THREE.Vector3>();
+  /** When a ball is potted (`visible` flips false), play a short drop animation before hiding. */
+  private readonly ballDropAnim = new Map<
+    string,
+    {
+      t: number;
+      fromX: number;
+      fromZ: number;
+      toX: number;
+      toZ: number;
+      baseY: number;
+      scaleBase: number;
+    }
+  >();
   private readonly tmpRollAxis = new THREE.Vector3();
   private readonly tmpRollDelta = new THREE.Quaternion();
   private readonly tableGroup = new THREE.Group();
@@ -361,6 +379,7 @@ export class ThreeSceneAdapter {
     this.applyCueStyle(state.activeCueId ?? state.opponentCueId);
     this.applyCamera(state.camera);
     this.syncWorldObjects(state.objects, dt);
+    this.tickBallDropAnim(dt);
     this.syncPolylines(state.polylines);
     this.updateCueHandHint(state, dt);
     this.updateBallInHandHandHint(state, dt);
@@ -465,21 +484,104 @@ export class ThreeSceneAdapter {
         }
       }
       if (!obj) continue;
+      if (o.objectId.startsWith('ball.') && (obj as THREE.Object3D).type === 'Mesh') {
+        const mesh = obj as THREE.Mesh;
+        if (this.ballDropAnim.has(o.objectId)) {
+          continue;
+        }
+        const wasVisible = mesh.visible;
+        if (wasVisible && !o.visible && this.ballLastPos.has(o.objectId)) {
+          this.startBallDropAnim(o.objectId, mesh);
+          continue;
+        }
+        if (o.visible) {
+          this.ballDropAnim.delete(o.objectId);
+          mesh.visible = true;
+          this.applyTransform(mesh, o);
+          this.applyBallRollVisual(mesh, o, dtSec);
+        } else {
+          mesh.visible = false;
+          this.applyTransform(mesh, o);
+        }
+        continue;
+      }
       obj.visible = o.visible;
       this.applyTransform(obj, o);
-      // `instanceof THREE.Mesh` can fail if multiple three bundles exist; `type` is reliable.
-      if (o.objectId.startsWith('ball.') && (obj as THREE.Object3D).type === 'Mesh') {
-        this.applyBallRollVisual(obj as THREE.Mesh, o, dtSec);
-      }
     }
     for (const [id, obj] of this.objectById) {
       if (!seen.has(id)) {
         this.ballRollQuat.delete(id);
         this.ballLastPos.delete(id);
+        this.ballDropAnim.delete(id);
         this.scene.remove(obj);
         this.objectById.delete(id);
         this.disposeObject(obj);
       }
+    }
+  }
+
+  private startBallDropAnim(id: string, mesh: THREE.Mesh): void {
+    const tw = this.physicsTable.width;
+    const th = this.physicsTable.height;
+    const mx = mesh.position.x;
+    const mz = mesh.position.z;
+    let bestD = Infinity;
+    let toX = mx;
+    let toZ = mz;
+    for (const p of this.physicsTable.pockets) {
+      const px = p.pos.x - tw / 2;
+      const pz = p.pos.y - th / 2;
+      const d = (px - mx) ** 2 + (pz - mz) ** 2;
+      if (d < bestD) {
+        bestD = d;
+        toX = px;
+        toZ = pz;
+      }
+    }
+    this.ballDropAnim.set(id, {
+      t: 0,
+      fromX: mx,
+      fromZ: mz,
+      toX,
+      toZ,
+      baseY: mesh.position.y,
+      scaleBase: mesh.scale.x,
+    });
+    mesh.visible = true;
+  }
+
+  private tickBallDropAnim(dt: number): void {
+    const finished: string[] = [];
+    for (const [id, st] of this.ballDropAnim) {
+      const mesh = this.objectById.get(id) as THREE.Mesh | undefined;
+      if (!mesh || mesh.type !== 'Mesh') {
+        finished.push(id);
+        continue;
+      }
+      st.t += dt;
+      const slideU = Math.min(1, st.t / POCKET_SLIDE_SEC);
+      const slideE = slideU * slideU * (3 - 2 * slideU);
+      const cx = st.fromX + (st.toX - st.fromX) * slideE;
+      const cz = st.fromZ + (st.toZ - st.fromZ) * slideE;
+      let cy = st.baseY;
+      let s = st.scaleBase;
+      if (st.t > POCKET_SLIDE_SEC) {
+        const dropU = Math.min(1, (st.t - POCKET_SLIDE_SEC) / POCKET_DROP_SEC);
+        const drop = dropU * dropU;
+        cy = st.baseY - POCKET_DROP_DEPTH_R * st.scaleBase * drop;
+        s = st.scaleBase * (1 - dropU * 0.85);
+      }
+      mesh.position.set(cx, cy, cz);
+      mesh.scale.setScalar(Math.max(1e-4, s));
+      mesh.visible = true;
+      if (st.t >= POCKET_SLIDE_SEC + POCKET_DROP_SEC) {
+        mesh.visible = false;
+        mesh.scale.setScalar(st.scaleBase);
+        finished.push(id);
+      }
+    }
+    for (const id of finished) {
+      this.ballDropAnim.delete(id);
     }
   }
 
@@ -636,11 +738,11 @@ export class ThreeSceneAdapter {
       });
   }
 
-  /** `Tung_Idle.fbx` — ölçek + pivot ayaklar container orijininde, felt üzerinde hizalanır. */
+  /** `public/opponents/tungo/model/Tungo_Idle.fbx` — ölçek + pivot ayaklar container orijininde. */
   private loadTungIdleFbxInto(container: THREE.Group): void {
     if (container.userData.tungLoadState === 'loading' || container.userData.tungLoadState === 'done') return;
     container.userData.tungLoadState = 'loading';
-    const href = new URL('../opponents/tung/model/Tung_Idle.fbx', import.meta.url).href;
+    const href = resolveBrowserAssetUrl(this.assetBaseUrl, 'opponents/tungo/model/Tungo_Idle.fbx');
     const loader = new FBXLoader();
     loader.load(
       href,
@@ -677,7 +779,7 @@ export class ThreeSceneAdapter {
       },
       undefined,
       (err) => {
-        console.warn('[ThreeSceneAdapter] Tung_Idle.fbx load failed:', err);
+        console.warn('[ThreeSceneAdapter] Tungo_Idle.fbx load failed:', err);
         container.userData.tungLoadState = 'error';
       },
     );

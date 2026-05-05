@@ -1,6 +1,6 @@
 /**
- * Drag on empty table = aim (angle).
- * Press behind the cue ball on the “cue line”, pull back for power; release to shoot.
+ * Legacy stroke helper (table pull zone). The live game uses {@link PoolInputState}:
+ * aim on the table + power on the right HUD slider (`power.drag`).
  *
  * @deprecated Prefer `PoolInputState` + `GameInputCommand` via `Game.update`.
  */

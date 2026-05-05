@@ -1,13 +1,12 @@
 import type { GameInputCommand } from './gameContract.js';
-import { isOnCuePullZone } from './cuePullZone.js';
 
 const MIN_SHOT_POWER = 0.14;
-const MAX_PULL_SENS = 0.0052;
 
 export type PoolStrokeMode = 'idle' | 'aim' | 'charge';
 
 /**
  * Browser-free aim + stroke state. Updated from `GameInputCommand` in core.
+ * Aim: `pointer.table` drag. Power: `power.drag` (HUD slider); table touches are ignored while charging.
  */
 export class PoolInputState {
   /** Aim direction in radians (shot velocity = (cos, sin)). */
@@ -53,44 +52,61 @@ export class PoolInputState {
         ctx.spinSetter(c.nx, c.ny);
         continue;
       }
+
+      if (c.type === 'power.drag') {
+        const v = Math.max(0, Math.min(1, c.value01));
+        if (c.phase === 'down') {
+          if (!ctx.phaseIsPlayerTurn || !ctx.cueActive) continue;
+          this.strokeMode = 'charge';
+          this.aimLocked = this.aimAngle;
+          this.aimDragging = false;
+          this.lastTable = null;
+          this.charge01 = v;
+          continue;
+        }
+        if (c.phase === 'move') {
+          if (!ctx.phaseIsPlayerTurn || !ctx.cueActive) continue;
+          if (this.strokeMode !== 'charge') continue;
+          this.charge01 = v;
+          continue;
+        }
+        if (c.phase === 'up') {
+          if (this.strokeMode !== 'charge') continue;
+          const ok = this.charge01 >= MIN_SHOT_POWER + 0.02;
+          const aim = this.aimLocked;
+          const power = this.charge01;
+          const spin = ctx.getSpin();
+          this.resetStroke();
+          if (ctx.phaseIsPlayerTurn && ok) {
+            ctx.requestShot(aim, power, spin.x, spin.y);
+          }
+          continue;
+        }
+        if (c.phase === 'cancel') {
+          this.aimDragging = false;
+          this.resetStroke();
+        }
+        continue;
+      }
+
       if (c.type !== 'pointer.table') continue;
       const { phase, tableX, tableY } = c;
+
+      if (this.strokeMode === 'charge') {
+        continue;
+      }
 
       if (phase === 'down') {
         if (!ctx.phaseIsPlayerTurn || !ctx.cueActive) continue;
         this.lastTable = { x: tableX, y: tableY };
-        const onCue = isOnCuePullZone(
-          tableX,
-          tableY,
-          ctx.cueX,
-          ctx.cueY,
-          this.aimAngle,
-          ctx.cueRadius,
-        );
-        if (onCue) {
-          this.strokeMode = 'charge';
-          this.aimLocked = this.aimAngle;
-          this.charge01 = MIN_SHOT_POWER;
-        } else {
-          this.strokeMode = 'aim';
-          this.aimDragging = true;
-        }
+        this.strokeMode = 'aim';
+        this.aimDragging = true;
         continue;
       }
 
       if (phase === 'move') {
         if (!ctx.phaseIsPlayerTurn || !ctx.cueActive) continue;
-        if (this.strokeMode === 'charge' && this.lastTable) {
-          const ax = Math.cos(this.aimLocked);
-          const ay = Math.sin(this.aimLocked);
-          const dx = tableX - this.lastTable.x;
-          const dy = tableY - this.lastTable.y;
-          const back = -ax * dx - ay * dy;
-          if (back > 0) {
-            this.charge01 = Math.min(1, this.charge01 + back * MAX_PULL_SENS);
-          }
-          this.lastTable = { x: tableX, y: tableY };
-        } else if (this.aimDragging) {
+        if (this.aimDragging) {
           const dx = tableX - ctx.cueX;
           const dy = tableY - ctx.cueY;
           if (dx * dx + dy * dy >= 16) {
@@ -102,18 +118,7 @@ export class PoolInputState {
 
       if (phase === 'up') {
         this.aimDragging = false;
-        if (ctx.phaseIsPlayerTurn && this.strokeMode === 'charge') {
-          const ok = this.charge01 >= MIN_SHOT_POWER + 0.02;
-          const aim = this.aimLocked;
-          const power = this.charge01;
-          const spin = ctx.getSpin();
-          this.resetStroke();
-          if (ok) {
-            ctx.requestShot(aim, power, spin.x, spin.y);
-          }
-        } else {
-          this.resetStroke();
-        }
+        this.resetStroke();
         continue;
       }
 

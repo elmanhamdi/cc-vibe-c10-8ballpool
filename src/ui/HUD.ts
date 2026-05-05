@@ -13,8 +13,8 @@ const SHOP_ICON_URL = new URL('./shop.png', import.meta.url).href;
 const PLAY_AGAIN_ICON_URL = new URL('./play-again.png', import.meta.url).href;
 
 function opponentHudAvatarUrl(assetBaseUrl: string, opponentId: string): string {
-  if (opponentId === 'tung') {
-    const e = AssetManifest['ui.opponent.tung.avatar'];
+  if (opponentId === 'tungo') {
+    const e = AssetManifest['ui.opponent.tungo.avatar'];
     return resolveBrowserAssetUrl(assetBaseUrl, e.browserUrl);
   }
   if (opponentId === 'balleeina') {
@@ -75,6 +75,10 @@ export class HUD {
   private soundMuted = false;
   private readonly gameRoot: HTMLElement | null;
   private readonly hudLayoutObserver: ResizeObserver;
+  private readonly powerBarWrap: HTMLElement;
+  private readonly powerBarTrack: HTMLElement;
+  /** True while user has primary pointer down on the power track (avoid HUD sync overwriting `--p`). */
+  private powerBarPointerDown = false;
 
   constructor(
     root: HTMLElement,
@@ -84,6 +88,7 @@ export class HUD {
     private readonly opts?: {
       toggleSound?: () => boolean;
       isSoundMuted?: () => boolean;
+      playUiClick?: () => void;
     },
   ) {
     this.root = root;
@@ -183,6 +188,9 @@ export class HUD {
     this.end = el('div', 'panel end interactive');
     this.end.innerHTML = `
       <div class="end-card">
+        <div id="end-opp-react" class="end-opp-react" aria-hidden="true">
+          <p id="end-opp-quote" class="end-opp-quote"></p>
+        </div>
         <div class="end-head">
           <div id="end-title" class="title">MATCH OVER</div>
           <div id="end-sub" class="sub">—</div>
@@ -323,6 +331,33 @@ export class HUD {
 
     this.rewardWin = this.topStack.querySelector('#hud-reward-win') as HTMLElement;
 
+    this.powerBarWrap = el('div', 'hud-power-bar interactive');
+    this.powerBarWrap.setAttribute('aria-label', 'Shot power — drag cue down, release to shoot');
+    this.powerBarWrap.innerHTML = `
+      <div class="hud-power-bar-inner">
+        <div class="hud-power-track" id="hud-power-track">
+          <div class="hud-power-chrome">
+            <div class="hud-power-groove">
+              <div class="hud-power-bg-muted" aria-hidden="true"></div>
+              <div class="hud-power-bg-spectrum" aria-hidden="true"></div>
+              <div class="hud-power-heat" aria-hidden="true"></div>
+              <div class="hud-power-handle hud-power-cue" role="slider" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" tabindex="0" aria-hidden="true">
+                <span class="hud-power-cue-tip"></span>
+                <span class="hud-power-cue-ferrule"></span>
+                <span class="hud-power-cue-shaft"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    this.powerBarTrack = this.powerBarWrap.querySelector('#hud-power-track') as HTMLElement;
+    const mutedTrack = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/power-meter/track-muted.png');
+    const spectrumTrack = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/power-meter/track-spectrum.png');
+    this.powerBarTrack.style.setProperty('--hud-power-muted-img', `url("${mutedTrack}")`);
+    this.powerBarTrack.style.setProperty('--hud-power-spectrum-img', `url("${spectrumTrack}")`);
+    this.powerBarWrap.style.display = 'none';
+
     root.append(
       this.menu,
       this.topStack,
@@ -334,6 +369,7 @@ export class HUD {
       this.shopOverlay,
       this.nextModal,
       this.soundBtn,
+      this.powerBarWrap,
     );
     this.soundMuted = this.opts?.isSoundMuted?.() ?? false;
     this.syncSoundButtonVisual();
@@ -342,10 +378,24 @@ export class HUD {
     this.hideGame();
   }
 
+  private playHudClickSound(): void {
+    if (this.soundMuted) return;
+    this.opts?.playUiClick?.();
+  }
+
   bindHandlers(): void {
-    this.btnNext.addEventListener('click', () => this.showNextMatchModal());
-    this.btnRematch.addEventListener('click', () => this.pushCommand({ type: 'menu.restart' }));
-    this.btnShop.addEventListener('click', () => this.showShopOverlay());
+    this.btnNext.addEventListener('click', () => {
+      this.playHudClickSound();
+      this.showNextMatchModal();
+    });
+    this.btnRematch.addEventListener('click', () => {
+      this.playHudClickSound();
+      this.pushCommand({ type: 'menu.restart' });
+    });
+    this.btnShop.addEventListener('click', () => {
+      this.playHudClickSound();
+      this.showShopOverlay();
+    });
 
     const spin = this.topStack.querySelector('#spin-pad') as HTMLElement;
     spin.addEventListener('pointerdown', (e: Event) => {
@@ -358,31 +408,59 @@ export class HUD {
 
     const statsClose = this.statsOverlay.querySelector('#hud-stats-close') as HTMLElement;
     const statsBackdrop = this.statsOverlay.querySelector('#hud-stats-backdrop') as HTMLElement;
-    statsClose.addEventListener('click', () => this.hideStatsOverlay());
-    statsBackdrop.addEventListener('click', () => this.hideStatsOverlay());
+    statsClose.addEventListener('click', () => {
+      this.playHudClickSound();
+      this.hideStatsOverlay();
+    });
+    statsBackdrop.addEventListener('click', () => {
+      this.playHudClickSound();
+      this.hideStatsOverlay();
+    });
 
     const levelClose = this.levelOverlay.querySelector('#hud-level-close') as HTMLElement;
     const levelBackdrop = this.levelOverlay.querySelector('#hud-level-backdrop') as HTMLElement;
-    levelClose.addEventListener('click', () => this.hideLevelOverlay());
-    levelBackdrop.addEventListener('click', () => this.hideLevelOverlay());
+    levelClose.addEventListener('click', () => {
+      this.playHudClickSound();
+      this.hideLevelOverlay();
+    });
+    levelBackdrop.addEventListener('click', () => {
+      this.playHudClickSound();
+      this.hideLevelOverlay();
+    });
 
     const shopClose = this.shopOverlay.querySelector('#hud-shop-close') as HTMLElement;
     const shopBackdrop = this.shopOverlay.querySelector('#hud-shop-backdrop') as HTMLElement;
-    shopClose.addEventListener('click', () => this.hideShopOverlay());
-    shopBackdrop.addEventListener('click', () => this.hideShopOverlay());
+    shopClose.addEventListener('click', () => {
+      this.playHudClickSound();
+      this.hideShopOverlay();
+    });
+    shopBackdrop.addEventListener('click', () => {
+      this.playHudClickSound();
+      this.hideShopOverlay();
+    });
     this.shopList.addEventListener('click', (e) => {
       const t = e.target as HTMLElement;
       const btn = t.closest('[data-buy],[data-equip]') as HTMLElement | null;
       if (!btn) return;
       const buy = btn.dataset.buy;
       const equip = btn.dataset.equip;
-      if (buy) this.pushCommand({ type: 'shop.buyCue', cueId: buy });
-      if (equip) this.pushCommand({ type: 'shop.equipCue', cueId: equip });
+      if (buy) {
+        this.playHudClickSound();
+        this.pushCommand({ type: 'shop.buyCue', cueId: buy });
+      }
+      if (equip) {
+        this.playHudClickSound();
+        this.pushCommand({ type: 'shop.equipCue', cueId: equip });
+      }
     });
 
     const nextBackdrop = this.nextModal.querySelector('#hud-next-backdrop') as HTMLElement;
-    nextBackdrop.addEventListener('click', () => this.hideNextMatchModal());
+    nextBackdrop.addEventListener('click', () => {
+      this.playHudClickSound();
+      this.hideNextMatchModal();
+    });
     this.nextAccept.addEventListener('click', () => {
+      this.playHudClickSound();
       this.hideNextMatchModal();
       this.pushCommand({ type: 'menu.next' });
     });
@@ -390,16 +468,26 @@ export class HUD {
     const plAvatar = this.topStack.querySelector('#pl-avatar-frame') as HTMLElement;
     const aiAvatar = this.topStack.querySelector('#ai-avatar-frame') as HTMLElement;
     const plLevel = this.topStack.querySelector('#pl-lvl') as HTMLElement | null;
-    plAvatar.addEventListener('click', () => this.showStatsOverlay('player'));
-    aiAvatar.addEventListener('click', () => this.showStatsOverlay('opponent'));
+    plAvatar.addEventListener('click', () => {
+      this.playHudClickSound();
+      this.showStatsOverlay('player');
+    });
+    aiAvatar.addEventListener('click', () => {
+      this.playHudClickSound();
+      this.showStatsOverlay('opponent');
+    });
     if (plLevel) {
       plLevel.classList.add('lvl-clickable');
       plLevel.setAttribute('role', 'button');
       plLevel.setAttribute('tabindex', '0');
-      plLevel.addEventListener('click', () => this.showLevelOverlay());
+      plLevel.addEventListener('click', () => {
+        this.playHudClickSound();
+        this.showLevelOverlay();
+      });
       plLevel.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
+          this.playHudClickSound();
           this.showLevelOverlay();
         }
       });
@@ -407,10 +495,14 @@ export class HUD {
     if (this.menuLevel) {
       this.menuLevel.setAttribute('role', 'button');
       this.menuLevel.setAttribute('tabindex', '0');
-      this.menuLevel.addEventListener('click', () => this.showLevelOverlay());
+      this.menuLevel.addEventListener('click', () => {
+        this.playHudClickSound();
+        this.showLevelOverlay();
+      });
       this.menuLevel.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
+          this.playHudClickSound();
           this.showLevelOverlay();
         }
       });
@@ -418,25 +510,97 @@ export class HUD {
     if (this.endLevel) {
       this.endLevel.setAttribute('role', 'button');
       this.endLevel.setAttribute('tabindex', '0');
-      this.endLevel.addEventListener('click', () => this.showLevelOverlay());
+      this.endLevel.addEventListener('click', () => {
+        this.playHudClickSound();
+        this.showLevelOverlay();
+      });
       this.endLevel.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
+          this.playHudClickSound();
           this.showLevelOverlay();
         }
       });
     }
 
     this.soundBtn.addEventListener('click', () => {
+      this.playHudClickSound();
       this.soundMuted = this.opts?.toggleSound?.() ?? !this.soundMuted;
       this.syncSoundButtonVisual();
+    });
+
+    this.bindPowerBarHandlers();
+  }
+
+  private bindPowerBarHandlers(): void {
+    const track = this.powerBarTrack;
+    const valueFromClientY = (clientY: number): number => {
+      const r = track.getBoundingClientRect();
+      if (r.height < 1) return 0;
+      return Math.max(0, Math.min(1, (clientY - r.top) / r.height));
+    };
+    const setVisual = (v: number): void => {
+      const p = Math.max(0, Math.min(1, v));
+      track.style.setProperty('--p', String(p));
+      track.style.setProperty('--heat', String(p));
+      const handle = track.querySelector('.hud-power-handle') as HTMLElement;
+      handle?.setAttribute('aria-valuenow', String(Math.round(p * 100)));
+    };
+
+    const finishDrag = (e: PointerEvent, phase: 'up' | 'cancel'): void => {
+      if (!this.powerBarPointerDown) return;
+      this.powerBarPointerDown = false;
+      const v = phase === 'cancel' ? 0 : valueFromClientY(e.clientY);
+      this.pushCommand({
+        type: 'power.drag',
+        phase,
+        value01: phase === 'cancel' ? 0 : v,
+      });
+      setVisual(0);
+      try {
+        track.releasePointerCapture(e.pointerId);
+      } catch {
+        /* not capturing */
+      }
+    };
+
+    track.addEventListener('pointerdown', (e: PointerEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.powerBarPointerDown = true;
+      try {
+        track.setPointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+      const v = valueFromClientY(e.clientY);
+      this.pushCommand({ type: 'power.drag', phase: 'down', value01: v });
+      setVisual(v);
+    });
+
+    track.addEventListener('pointermove', (e: PointerEvent) => {
+      if (!this.powerBarPointerDown) return;
+      const v = valueFromClientY(e.clientY);
+      this.pushCommand({ type: 'power.drag', phase: 'move', value01: v });
+      setVisual(v);
+    });
+
+    track.addEventListener('pointerup', (e: PointerEvent) => {
+      finishDrag(e, 'up');
+    });
+
+    track.addEventListener('pointercancel', (e: PointerEvent) => {
+      finishDrag(e, 'cancel');
     });
   }
 
   syncFromState(): void {
     const h = this.getHud();
     const eb = h.eightBall;
-    if (!eb) return;
+    if (!eb) {
+      this.applyPowerBarVisibility(h);
+      return;
+    }
 
     const phase = eb.phase;
     const opp = {
@@ -467,6 +631,7 @@ export class HUD {
       this.clearHudTopBand();
       this.hideStatsOverlay();
       this.renderShopPanel(h);
+      this.applyPowerBarVisibility(h);
       return;
     }
 
@@ -484,6 +649,7 @@ export class HUD {
       this.clearHudTopBand();
       if (this.menuLevel) this.menuLevel.textContent = levelLabel;
       if (this.endLevel) this.endLevel.textContent = levelLabel;
+      this.applyPowerBarVisibility(h);
       return;
     }
 
@@ -512,7 +678,7 @@ export class HUD {
 
     const aiImg = this.topStack.querySelector('#ai-avatar-img') as HTMLImageElement;
     aiImg.src = opponentHudAvatarUrl(this.assetBaseUrl, opp.id);
-    if (opp.id === 'tung') {
+    if (opp.id === 'tungo') {
       aiImg.style.filter = '';
     } else {
       let hue = 0;
@@ -594,7 +760,30 @@ export class HUD {
 
     this.renderShopPanel(h);
 
+    this.applyPowerBarVisibility(h);
     requestAnimationFrame(() => this.applyHudTopBandFromLayout());
+  }
+
+  private applyPowerBarVisibility(h: HudState): void {
+    const eb = h.eightBall;
+    const show =
+      eb != null &&
+      eb.phase === 'PlayerTurn' &&
+      !h.cueBallInHandCursorHint &&
+      !eb.opponentReaction;
+    if (!show) {
+      this.powerBarWrap.style.display = 'none';
+      this.powerBarWrap.classList.remove('hint');
+      this.powerBarTrack.style.setProperty('--p', '0');
+      this.powerBarTrack.style.setProperty('--heat', '0');
+      return;
+    }
+    this.powerBarWrap.style.display = 'flex';
+    this.powerBarWrap.classList.toggle('hint', eb.powerBarHint === true);
+    if (!this.powerBarPointerDown) {
+      this.powerBarTrack.style.setProperty('--p', '0');
+      this.powerBarTrack.style.setProperty('--heat', '0');
+    }
   }
 
   private renderStatsModal(
@@ -887,6 +1076,22 @@ export class HUD {
   private syncEndOverlay(won: boolean, reason: string, h: HudState): void {
     const title = this.end.querySelector('#end-title')!;
     const sub = this.end.querySelector('#end-sub')!;
+    const oppReact = this.end.querySelector('#end-opp-react') as HTMLElement;
+    const oppQuote = this.end.querySelector('#end-opp-quote') as HTMLElement;
+    const me = h.eightBall?.matchEndOpponentPortrait;
+    if (won && me?.portraitAssetId) {
+      const entry = AssetManifest[me.portraitAssetId as keyof typeof AssetManifest];
+      const src = entry ? resolveBrowserAssetUrl(this.assetBaseUrl, entry.browserUrl) : '';
+      oppReact.style.backgroundImage = src ? `url("${src}")` : '';
+      oppQuote.textContent = me.text ?? '';
+      oppReact.classList.add('show');
+      oppReact.setAttribute('aria-hidden', 'false');
+    } else {
+      oppReact.classList.remove('show');
+      oppReact.style.backgroundImage = '';
+      oppQuote.textContent = '';
+      oppReact.setAttribute('aria-hidden', 'true');
+    }
     title.textContent = won ? 'YOU WON' : 'YOU LOST';
     title.classList.toggle('end-title-win', won);
     sub.textContent = reason;
@@ -911,6 +1116,11 @@ export class HUD {
     this.bubble.style.display = 'none';
     this.end.style.display = 'none';
     this.soundBtn.style.display = 'none';
+    this.powerBarPointerDown = false;
+    this.powerBarWrap.style.display = 'none';
+    this.powerBarWrap.classList.remove('hint');
+    this.powerBarTrack.style.setProperty('--p', '0');
+    this.powerBarTrack.style.setProperty('--heat', '0');
     this.stopConfetti();
     this.stopRingAudio();
     this.hideShopOverlay();

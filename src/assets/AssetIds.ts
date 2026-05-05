@@ -29,10 +29,12 @@ export const AssetIds = {
   soundApplause: 'sound.ui.applause',
   /** Next-match ringing cue (looped in HUD popup). */
   soundPhoneRing: 'sound.ui.phoneRing',
-  /** Tung taunt VO (`public/opponents/tung/audio/tung*.ogg`). */
-  soundTungTaunt1: 'sound.opponent.tung.taunt1',
-  soundTungTaunt2: 'sound.opponent.tung.taunt2',
-  soundTungTaunt3: 'sound.opponent.tung.taunt3',
+  /** Center reaction beat one-shots (`public/audio/Reaction_{1,2,3}.wav`). */
+  soundReaction1: 'sound.ui.reaction1',
+  soundReaction2: 'sound.ui.reaction2',
+  soundReaction3: 'sound.ui.reaction3',
+  /** HUD button click (`public/audio/Click.wav`). */
+  soundUiClick: 'sound.ui.click',
   /** Geçici silüet; sonra FBX ile değiştirilecek. */
   opponentTungPlaceholder: 'char.tungPlaceholder',
 } as const;

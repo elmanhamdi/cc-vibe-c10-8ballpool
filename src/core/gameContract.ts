@@ -14,6 +14,12 @@ export type GameInputCommand =
       phase: 'down' | 'move' | 'up' | 'cancel';
       tableX: number;
       tableY: number;
+    }
+  /** Right-edge HUD power slider: 0 = top (weak / cancel), 1 = bottom (full). */
+  | {
+      type: 'power.drag';
+      phase: 'down' | 'move' | 'up' | 'cancel';
+      value01: number;
     };
 
 export interface ViewportSize {

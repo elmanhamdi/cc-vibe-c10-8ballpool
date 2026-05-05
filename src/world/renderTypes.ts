@@ -80,7 +80,7 @@ export interface RenderWorldState {
   polylines: readonly PolylineObjectState[];
   tableSpace: TableSpaceMeta;
   ambientColorHex?: string;
-  /** İsteka üzerinde “çek–vur” el animasyonu — yalnızca ilk break / açılış sahnesi. */
+  /** Reserved; 3D hand-on-cue hint disabled (power uses HUD slider; first-break pulse is `HudState.eightBall.powerBarHint`). */
   cuePullHandHint?: boolean;
   /** Oyuncu beyazı sürükleyerek yerleştirirken el ikonu + tarayıcı imleci. */
   cueBallInHandCursorHint?: boolean;
@@ -152,13 +152,17 @@ export interface HudState {
     /** Center reaction beat after your shot (portrait + line). */
     opponentReaction: null | {
       text: string;
-      /** Stable asset id in AssetManifest (e.g. ui.opponent.tung.reaction.laugh); null = placeholder. */
+      /** Stable asset id in AssetManifest (e.g. ui.opponent.tungo.reaction.smile); null = placeholder. */
       portraitAssetId: string | null;
       /** Matches engine TTL so CSS motion can span the whole beat. */
       durationSec: number;
       /** Increments each beat so the HUD can restart CSS animations. */
       beatId: number;
     };
+    /** First-break hint: pulse the right-edge power slider (replaces on-cue “pull back” cue). */
+    powerBarHint?: boolean;
+    /** Match-end opponent reaction (Tungo lose face) when the player wins. */
+    matchEndOpponentPortrait?: { portraitAssetId: string; text: string } | null;
   };
   nextOpponent?: {
     id: string;

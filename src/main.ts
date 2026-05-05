@@ -3,6 +3,7 @@ import { GameEngine } from './core/GameEngine.js';
 import { Table } from './physics/Table.js';
 import { resolveTableLayoutFromBrowser } from './platform-browser/tableLayoutFromUrl.js';
 import type { GameInputCommand } from './core/gameContract.js';
+import { AssetIds } from './assets/AssetIds.js';
 import { ThreeSceneAdapter } from './render-three/ThreeSceneAdapter.js';
 import { BrowserHudAdapter } from './platform-browser/BrowserHudAdapter.js';
 import { BrowserAudioAdapter } from './platform-browser/BrowserAudioAdapter.js';
@@ -19,7 +20,7 @@ const gameRoot = document.querySelector<HTMLElement>('#game-root')!;
 const commandBuffer: GameInputCommand[] = [];
 const tableLayout = resolveTableLayoutFromBrowser();
 const sharedTable = new Table(tableLayout);
-const engine = new GameEngine({ table: sharedTable, ballRadius: 9 });
+const engine = new GameEngine({ table: sharedTable, ballRadius: 8.1 });
 const assetBaseUrl = import.meta.env.BASE_URL;
 const sceneAdapter = new ThreeSceneAdapter(canvas, { assetBaseUrl, physicsTable: sharedTable });
 const audioAdapter = new BrowserAudioAdapter({ assetBaseUrl });
@@ -62,6 +63,9 @@ const hudAdapter = new BrowserHudAdapter(
     assetBaseUrl,
     toggleSound: () => audioAdapter.toggleMute(),
     isSoundMuted: () => audioAdapter.isMuted(),
+    playUiClick: () => {
+      audioAdapter.playSoundEffect(AssetIds.soundUiClick, 0.55);
+    },
   },
 );
 hudAdapter.bind();
@@ -143,6 +147,7 @@ const loop = (now: number) => {
   last = now;
   const cmds = commandBuffer.splice(0, commandBuffer.length);
   engine.update(dt, cmds);
+  audioAdapter.consume(engine.drainEvents());
   canvas.style.cursor = engine.isAwaitingPlayerBallInHand() ? 'grab' : 'auto';
   const hints = renderHints();
   const rw = engine.getRenderWorldState(
@@ -174,7 +179,6 @@ const loop = (now: number) => {
       cameraDebug.setLines(['F açık — rakip sırasında polar/azimuth; O ile kadraj önizle']);
     }
   }
-  audioAdapter.consume(engine.drainEvents());
   requestAnimationFrame(loop);
 };
 

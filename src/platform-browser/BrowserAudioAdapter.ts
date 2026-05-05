@@ -56,7 +56,7 @@ function getAudioContextConstructor(): typeof AudioContext | null {
 /**
  * Maps core `GameEvent` to browser audio via AssetManifest (guide §10).
  * BGM: Web Audio buffer + loop + `playbackRate` (HTMLMediaElement rate is unreliable).
- * SFX: short `HTMLAudioElement` clips.
+ * SFX: Web Audio buffer + çoklu `BufferSource` (HTMLAudio tek kanal / gecikme sorunlarını önler); gerekirse HTML fallback.
  */
 export class BrowserAudioAdapter {
   private readonly assetBaseUrl: string;
@@ -67,6 +67,11 @@ export class BrowserAudioAdapter {
   private bgmLoadGen = 0;
   /** Yalnızca `AudioContext` yoksa BGM için kullanılır. */
   private bgmHtmlFallback: HTMLAudioElement | null = null;
+  /** Kısa SFX için ayrı bağlam; BGM ile aynı anda çalışır, çoklu çarpışmada üst üste `BufferSource` destekler. */
+  private sfxCtx: AudioContext | null = null;
+  private sfxMasterGain: GainNode | null = null;
+  private readonly sfxBufferCache = new Map<string, AudioBuffer>();
+  private readonly sfxLoadInflight = new Map<string, Promise<AudioBuffer | null>>();
   private muted = false;
 
   constructor(options?: BrowserAudioAdapterOptions) {
@@ -80,6 +85,7 @@ export class BrowserAudioAdapter {
   resumeBackgroundMusicIfNeeded(): void {
     if (this.muted) return;
     void this.bgmCtx?.resume().catch(() => {});
+    void this.sfxCtx?.resume().catch(() => {});
     const h = this.bgmHtmlFallback;
     if (h?.paused) void h.play().catch(() => {});
   }
@@ -88,16 +94,27 @@ export class BrowserAudioAdapter {
     return this.muted;
   }
 
+  /** HUD / host: one-shot SFX outside `GameEvent` drain (respects mute; same gain chain as pool SFX). */
+  playSoundEffect(soundId: string, volume = 1): void {
+    if (this.muted) return;
+    const entry = AssetManifest[soundId as keyof typeof AssetManifest];
+    if (!entry || entry.kind !== 'audio') return;
+    const vol = Math.max(0, Math.min(1, volume * SFX_MASTER_GAIN));
+    this.playSfx(entry, soundId, vol);
+  }
+
   toggleMute(): boolean {
     this.muted = !this.muted;
     if (this.muted) {
       void this.bgmCtx?.suspend().catch(() => {});
+      void this.sfxCtx?.suspend().catch(() => {});
       this.bgmHtmlFallback?.pause();
     } else {
       if (!this.bgmSource && !this.bgmHtmlFallback && this.bgmMusicId) {
         this.ensureBackgroundMusicLoop(this.bgmMusicId);
       }
       void this.bgmCtx?.resume().catch(() => {});
+      void this.sfxCtx?.resume().catch(() => {});
       const h = this.bgmHtmlFallback;
       if (h?.paused) void h.play().catch(() => {});
     }
@@ -115,8 +132,106 @@ export class BrowserAudioAdapter {
       const entry = AssetManifest[e.soundId as keyof typeof AssetManifest];
       if (!entry || entry.kind !== 'audio') continue;
       const vol = Math.max(0, Math.min(1, (e.volume ?? 1) * SFX_MASTER_GAIN));
-      this.playWithExtensionFallback(entry, vol);
+      this.playSfx(entry, e.soundId, vol);
     }
+  }
+
+  private ensureSfxGraph(): { ctx: AudioContext; master: GainNode } {
+    if (this.sfxCtx && this.sfxCtx.state !== 'closed' && this.sfxMasterGain) {
+      return { ctx: this.sfxCtx, master: this.sfxMasterGain };
+    }
+    const Ctor = getAudioContextConstructor();
+    if (!Ctor) {
+      throw new Error('AudioContext not available');
+    }
+    this.sfxCtx = new Ctor();
+    this.sfxMasterGain = this.sfxCtx.createGain();
+    this.sfxMasterGain.gain.value = 1;
+    this.sfxMasterGain.connect(this.sfxCtx.destination);
+    return { ctx: this.sfxCtx, master: this.sfxMasterGain };
+  }
+
+  private async decodeSfxBuffer(soundId: string, entry: AssetManifestEntry): Promise<AudioBuffer | null> {
+    const cached = this.sfxBufferCache.get(soundId);
+    if (cached) return cached;
+    const wait = this.sfxLoadInflight.get(soundId);
+    if (wait) return wait;
+
+    const promise = (async (): Promise<AudioBuffer | null> => {
+      const again = this.sfxBufferCache.get(soundId);
+      if (again) return again;
+      let ctx: AudioContext;
+      try {
+        ({ ctx } = this.ensureSfxGraph());
+      } catch {
+        return null;
+      }
+      const { stem, exts } = audioStemAndOrder(entry);
+      for (let i = 0; i < exts.length; i++) {
+        const url = resolveBrowserAssetUrl(this.assetBaseUrl, `${stem}.${exts[i]}`);
+        try {
+          const res = await fetch(url);
+          if (!res.ok) continue;
+          const ab = await res.arrayBuffer();
+          const buf = await ctx.decodeAudioData(ab.slice(0));
+          this.sfxBufferCache.set(soundId, buf);
+          return buf;
+        } catch {
+          continue;
+        }
+      }
+      return null;
+    })();
+
+    this.sfxLoadInflight.set(soundId, promise);
+    try {
+      return await promise;
+    } finally {
+      this.sfxLoadInflight.delete(soundId);
+    }
+  }
+
+  private playSfx(entry: AssetManifestEntry, soundId: string, volume: number): void {
+    if (!getAudioContextConstructor()) {
+      this.playWithExtensionFallback(entry, volume);
+      return;
+    }
+    const cached = this.sfxBufferCache.get(soundId);
+    if (cached) {
+      void this.playSfxBufferInstance(cached, volume);
+      return;
+    }
+    void this.playSfxAsync(entry, soundId, volume);
+  }
+
+  private async playSfxAsync(entry: AssetManifestEntry, soundId: string, volume: number): Promise<void> {
+    if (this.muted) return;
+    const buf = await this.decodeSfxBuffer(soundId, entry);
+    if (this.muted) return;
+    if (!buf) {
+      this.playWithExtensionFallback(entry, volume);
+      return;
+    }
+    this.playSfxBufferInstance(buf, volume);
+  }
+
+  private playSfxBufferInstance(buf: AudioBuffer, volume: number): void {
+    if (this.muted) return;
+    let ctx: AudioContext;
+    let master: GainNode;
+    try {
+      ({ ctx, master } = this.ensureSfxGraph());
+    } catch {
+      return;
+    }
+    void ctx.resume().catch(() => {});
+    const src = ctx.createBufferSource();
+    const g = ctx.createGain();
+    g.gain.value = volume;
+    src.buffer = buf;
+    src.connect(g);
+    g.connect(master);
+    src.start(0);
   }
 
   private getOrCreateBgmContext(): AudioContext {

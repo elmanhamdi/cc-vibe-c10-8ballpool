@@ -12,7 +12,13 @@ import {
 } from '../gameplay/RulesEngine.js';
 import { AIController, type AIShotPlan } from '../ai/AIController.js';
 import { CAREER_OPPONENTS } from '../ai/AICharacters.js';
-import { TUNG_DEFAULT_REACTION_ASSET_ID, tungReactionPortraitAssetIdForLine } from '../opponents/tungReactions.js';
+import {
+  pickTungoLine,
+  randomTimeReactionKind,
+  TUNGO_DEFAULT_REACTION_ASSET_ID,
+  tungoReactionAssetId,
+  type TungoReactionKind,
+} from '../opponents/tungoReactions.js';
 import type { AICharacterProfile } from '../ai/types.js';
 import { DialogueManager } from '../systems/DialogueManager.js';
 import type { DialogueCategory } from '../systems/dialogueLines.js';
@@ -140,11 +146,17 @@ export class GameEngine implements Game {
   } | null = null;
   private opponentReactionBeatSeq = 0;
 
+  /** Tungo Biliardo — consecutive pots where the player keeps the table (for “scared” beat). */
+  private tungoPlayerRun = 0;
+  private tungoLastBallReactionUsed = false;
+  /** Match-end overlay when the player wins vs Tungo (reaction art + line). */
+  private tungoMatchEndCry: { portraitAssetId: string; text: string } | null = null;
+
   readonly poolInput = new PoolInputState();
   private readonly eventQueue: GameEvent[] = [];
 
   constructor(options?: GameEngineOptions) {
-    const ballRadius = options?.ballRadius ?? 9;
+    const ballRadius = options?.ballRadius ?? 8.1;
     this.table = options?.table ?? new Table();
     this.physics = new CollisionSystem(this.table, ballRadius);
     this.ai = new AIController(CAREER_OPPONENTS[0]!);
@@ -316,6 +328,9 @@ export class GameEngine implements Game {
     this.turnClock.beginTurn('player');
     this.dialogue.clearBubble();
     this.opponentReaction = null;
+    this.tungoPlayerRun = 0;
+    this.tungoLastBallReactionUsed = false;
+    this.tungoMatchEndCry = null;
     this.pressureSent = false;
     this.pendingAI = null;
     this.phase = 'PlayerTurn';
@@ -344,17 +359,22 @@ export class GameEngine implements Game {
     if (this.phase !== 'PlayerTurn') return false;
     if (!this.physics.cue.active) return false;
     const cueStats = this.findCue(this.profile.equippedCueId)?.stats ?? { power: 1, aim: 1, spin: 1 };
-    power01 = Math.max(0.1, Math.min(1, power01 * cueStats.power));
+    const isOpeningBreak = this.awaitingFirstPlayerBreakShot;
+    let p = Math.max(0.1, Math.min(1, power01 * cueStats.power));
+    /** Opening break: modest boost so mid-slider still splits (was 1.2x + 0.08). */
+    if (isOpeningBreak) {
+      p = Math.min(1, p * 1.06 + 0.045);
+    }
     spinX = Math.max(-1, Math.min(1, spinX * cueStats.spin));
     spinY = Math.max(-1, Math.min(1, spinY * cueStats.spin));
-    this.activeShotIsOpeningBreak = this.awaitingFirstPlayerBreakShot;
-    if (this.awaitingFirstPlayerBreakShot) {
+    this.activeShotIsOpeningBreak = isOpeningBreak;
+    if (isOpeningBreak) {
       this.awaitingFirstPlayerBreakShot = false;
       this.aiCameraBlend = 1;
       this.aiCameraBlendTarget = 0;
       this.openingShotCameraReturnActive = true;
     }
-    this.physics.applyShot(angle, power01, spinX, spinY);
+    this.physics.applyShot(angle, p, spinX, spinY);
     this.physics.beginShot();
     this.pushSound(AssetIds.soundCueStrike, 0.55);
     this.phase = 'BallSimulation';
@@ -453,7 +473,8 @@ export class GameEngine implements Game {
     if (this.phase === 'BallSimulation') {
       const done = this.physics.stepFrame(dt);
       const ballHits = this.physics.getBallBallHitsThisFrame();
-      const maxHitsPerFrame = 8;
+      /** Yoğun kırışta alt-adımlarda çok sayıda temas olabilir; HTMLAudio yerine Web Audio ile çoklu çalma destekleniyor. */
+      const maxHitsPerFrame = 24;
       for (let i = 0; i < Math.min(ballHits, maxHitsPerFrame); i++) {
         this.pushSound(AssetIds.soundBallBall, 0.38);
       }
@@ -514,16 +535,32 @@ export class GameEngine implements Game {
     }
     if (shot) {
       this.pushSound(AssetIds.soundBallsSettle, 0.22);
-      if (shot.potted.length > 0) this.pushSound(AssetIds.soundPocket, 0.45);
+      if (shot.potted.length > 0) {
+        this.pushSound(AssetIds.soundPocket, 0.42);
+        setTimeout(() => this.pushSound(AssetIds.soundPocket, 0.22), 320);
+      }
     }
     this.lastHudReason = res.reason;
     this.maybeTaunt(res, shooter, shot);
+
+    const tungoOpp = this.getOpponent();
+    if (tungoOpp.id === 'tungo' && shooter === 'player' && !res.playerWon && !res.playerLost) {
+      this.updateTungoStreakAfterMaybeTaunt(res);
+    }
 
     if (res.respawnCueInKitchen) {
       this.physics.placeCueBallInKitchen();
     }
 
     if (res.playerWon || res.playerLost) {
+      if (res.playerWon && this.getOpponent().id === 'tungo') {
+        this.tungoMatchEndCry = {
+          portraitAssetId: tungoReactionAssetId('cry'),
+          text: pickTungoLine('cry'),
+        };
+      } else {
+        this.tungoMatchEndCry = null;
+      }
       this.phase = 'MatchEnd';
       this.turnClock.stop();
       this.pendingAI = null;
@@ -594,6 +631,124 @@ export class GameEngine implements Game {
       this.aiCameraBlendTarget =
         this.awaitingFirstAiShot || Math.random() >= AI_CAMERA_CINEMATIC_CHANCE ? 0 : 1;
     }
+
+    if (this.getOpponent().id === 'tungo' && this.phase === 'PlayerTurn' && this.activePlayer === 'player') {
+      this.maybeTungoLastBallReactionOnPlayerTurnStart();
+    }
+  }
+
+  private playerIsOnEightBallOnly(): boolean {
+    const ctx = this.rulesCtx;
+    if (ctx.openTable || ctx.playerGroup == null) return false;
+    const g = ctx.playerGroup;
+    const hasOwnGroupBall = this.physics.balls.some(
+      (b) => b.active && kindToGroup(b.kind) === g,
+    );
+    if (hasOwnGroupBall) return false;
+    return this.physics.balls.some((b) => b.active && b.kind === 'eight');
+  }
+
+  /** First time per rack the player aims with only the 8 left to legally shoot (once per match). */
+  private maybeTungoLastBallReactionOnPlayerTurnStart(): void {
+    if (this.opponentReaction) return;
+    if (this.tungoLastBallReactionUsed) return;
+    if (!this.playerIsOnEightBallOnly()) return;
+    const text = pickTungoLine('lastBall');
+    this.scheduleTungoReaction('lastBall', text, { force: true });
+    this.tungoLastBallReactionUsed = true;
+  }
+
+  private updateTungoStreakAfterMaybeTaunt(res: TurnResolution): void {
+    if (res.playerWon || res.playerLost) return;
+    if (res.foul !== 'none' || !res.continueWithSamePlayer) {
+      this.tungoPlayerRun = 0;
+      return;
+    }
+    this.tungoPlayerRun += 1;
+    if (this.opponentReaction || this.tungoPlayerRun !== 2) return;
+    if (Math.random() > 0.42) return;
+    const text = pickTungoLine('scary');
+    this.scheduleTungoReaction('scary', text, { force: true });
+  }
+
+  private tungoReactionRollProbability(badShot: boolean): number {
+    const endgameLow = this.countActiveTableBallsExcludingCue() <= 2;
+    if (badShot && endgameLow) return 0.52;
+    if (badShot) return 0.36;
+    return 0.18;
+  }
+
+  private scheduleTungoReaction(
+    kind: TungoReactionKind,
+    text: string,
+    opts: { force?: boolean; reactionProb?: number },
+  ): void {
+    if (this.getOpponent().id !== 'tungo') return;
+    if (this.opponentReaction) return;
+    const p = opts.force ? 1 : (opts.reactionProb ?? 0.36);
+    if (Math.random() > p) return;
+
+    const ttl = OPPONENT_REACTION_TTL_MIN_SEC + Math.random() * OPPONENT_REACTION_TTL_RANDOM_SEC;
+    this.opponentReactionBeatSeq += 1;
+    const portraitAssetId = tungoReactionAssetId(kind);
+    this.opponentReaction = {
+      text,
+      ttl,
+      durationTotal: ttl,
+      beatId: this.opponentReactionBeatSeq,
+      portraitAssetId,
+    };
+    this.dialogue.clearBubble();
+    this.dialogue.alignBubbleTtl(ttl);
+    this.playRandomReactionSound();
+  }
+
+  private maybeTauntTungo(
+    res: TurnResolution,
+    shooter: PlayerId,
+    shot: ShotOutcome | undefined,
+    silentChance: number,
+  ): void {
+    const opp = this.getOpponent();
+
+    if (shooter === 'ai' && res.foul === 'none' && res.continueWithSamePlayer) {
+      void this.tryDialogue('ai_good_shot', opp, silentChance);
+      return;
+    }
+
+    if (shooter !== 'player') return;
+
+    if (res.foul !== 'none') {
+      if (res.foul === 'turn_timeout') {
+        const tk = randomTimeReactionKind();
+        const lineKey = tk === 'time' ? 'time' : 'time2';
+        const text = pickTungoLine(lineKey);
+        this.scheduleTungoReaction(tk, text, { force: true });
+        return;
+      }
+      if (res.foul === 'no_ball_hit') {
+        const text = pickTungoLine('ball');
+        this.scheduleTungoReaction('ball', text, { force: true });
+        return;
+      }
+      if (Math.random() < silentChance) return;
+      const text = pickTungoLine('smile');
+      const rp = this.tungoReactionRollProbability(true);
+      this.scheduleTungoReaction('smile', text, { reactionProb: rp });
+      return;
+    }
+
+    if (
+      !res.continueWithSamePlayer &&
+      res.nextTurn === 'ai' &&
+      shot &&
+      shot.potted.length === 0
+    ) {
+      if (Math.random() < silentChance) return;
+      const text = pickTungoLine('laught');
+      const rp = this.tungoReactionRollProbability(true);
+      this.scheduleTungoReaction('laught', text, { reactionProb: rp });
+    }
   }
 
   private tickAiCameraBlend(dt: number): void {
@@ -615,6 +770,11 @@ export class GameEngine implements Game {
     const silentChance = opp.personality === 'silent' ? 0.55 : opp.personality === 'calm' ? 0.18 : 0.08;
 
     if (res.playerWon || res.playerLost) return;
+
+    if (opp.id === 'tungo') {
+      this.maybeTauntTungo(res, shooter, shot, silentChance);
+      return;
+    }
 
     if (shooter === 'player' && res.foul !== 'none') {
       const sc = res.foul === 'turn_timeout' ? silentChance * 0.45 : silentChance;
@@ -676,19 +836,15 @@ export class GameEngine implements Game {
     /** Reaction portrait + text on screen; AI waits until this elapses. */
     const ttl = OPPONENT_REACTION_TTL_MIN_SEC + Math.random() * OPPONENT_REACTION_TTL_RANDOM_SEC;
     this.opponentReactionBeatSeq += 1;
-    const opp = this.getOpponent();
-    const portraitAssetId = opp.id === 'tung' ? tungReactionPortraitAssetIdForLine(spoken) : null;
     this.opponentReaction = {
       text: spoken,
       ttl,
       durationTotal: ttl,
       beatId: this.opponentReactionBeatSeq,
-      portraitAssetId,
+      portraitAssetId: null,
     };
     this.dialogue.alignBubbleTtl(ttl);
-    if (opp.id === 'tung' && portraitAssetId != null) {
-      this.playRandomTungTauntSound();
-    }
+    this.playRandomReactionSound();
   }
 
   private tryDialogue(cat: DialogueCategory, opp: AICharacterProfile, silentChance?: number): string | null {
@@ -697,13 +853,9 @@ export class GameEngine implements Game {
     });
   }
 
-  /** One of `public/opponents/tung/audio/tung{1,2,3}.ogg` when the center portrait reaction is shown. */
-  private playRandomTungTauntSound(): void {
-    const clips = [
-      AssetIds.soundTungTaunt1,
-      AssetIds.soundTungTaunt2,
-      AssetIds.soundTungTaunt3,
-    ] as const;
+  /** One of `public/audio/Reaction_{1,2,3}.wav` when the center portrait reaction is shown. */
+  private playRandomReactionSound(): void {
+    const clips = [AssetIds.soundReaction1, AssetIds.soundReaction2, AssetIds.soundReaction3] as const;
     const pick = clips[Math.floor(Math.random() * clips.length)]!;
     this.pushSound(pick, 0.88);
   }
@@ -869,6 +1021,15 @@ export class GameEngine implements Game {
               beatId: this.opponentReaction.beatId,
             }
           : null,
+        powerBarHint:
+          this.awaitingFirstPlayerBreakShot &&
+          this.activePlayer === 'player' &&
+          snap.phase === 'PlayerTurn' &&
+          !this.opponentReaction &&
+          !this.awaitingBallInHandPlacement &&
+          this.physics.cue.active,
+        matchEndOpponentPortrait:
+          snap.phase === 'MatchEnd' ? this.tungoMatchEndCry : null,
       },
       cueBallInHandCursorHint:
         this.awaitingBallInHandPlacement && this.phase === 'PlayerTurn' && this.physics.cue.active,
@@ -1012,7 +1173,7 @@ export class GameEngine implements Game {
     }
 
     const opponentId = this.getOpponent().id;
-    if (this.phase !== 'MainMenu' && this.phase !== 'MatchEnd' && opponentId === 'tung') {
+    if (this.phase !== 'MainMenu' && this.phase !== 'MatchEnd' && opponentId === 'tungo') {
       const feltY = cue.radius + 0.15 + OPPONENT_TUNG_WORLD_Y_OFFSET;
       const tz = -(th * 0.5) - OPPONENT_TUNG_PLACEHOLDER_PAST_RAIL_Z;
       objects.push({
@@ -1123,14 +1284,8 @@ export class GameEngine implements Game {
       polylines.push(...buildPhysicsDebugLines(t, tw, th, cue.radius));
     }
 
-    const cuePullHandHint =
-      this.awaitingFirstPlayerBreakShot &&
-      this.activePlayer === 'player' &&
-      this.phase === 'PlayerTurn' &&
-      !this.opponentReaction &&
-      !this.awaitingBallInHandPlacement &&
-      showCue &&
-      this.poolInput.strokeMode !== 'charge';
+    /** Power lives in HUD slider; no 3D “pull on cue” hand sprite. */
+    const cuePullHandHint = false;
 
     const cueBallInHandCursorHint =
       this.awaitingBallInHandPlacement && this.phase === 'PlayerTurn' && this.physics.cue.active;
@@ -1220,10 +1375,10 @@ export class GameEngine implements Game {
   /** Debug: immediately show a reaction beat (portrait + line). */
   debugShowReaction(): void {
     if (this.phase === 'MatchEnd') return;
-    const ttl = OPPONENT_REACTION_TTL_MIN_SEC + Math.random() * Math.max(0.01, OPPONENT_REACTION_TTL_RANDOM_SEC);
+    const ttl = OPPONENT_REACTION_TTL_MIN_SEC + Math.random() * OPPONENT_REACTION_TTL_RANDOM_SEC;
     this.opponentReactionBeatSeq += 1;
     const opp = this.getOpponent();
-    const portraitAssetId = opp.id === 'tung' ? TUNG_DEFAULT_REACTION_ASSET_ID : null;
+    const portraitAssetId = opp.id === 'tungo' ? TUNGO_DEFAULT_REACTION_ASSET_ID : null;
     this.opponentReaction = {
       text: 'Debug reaction',
       ttl,
@@ -1233,9 +1388,7 @@ export class GameEngine implements Game {
     };
     this.dialogue.clearBubble();
     this.dialogue.alignBubbleTtl(ttl);
-    if (opp.id === 'tung' && portraitAssetId != null) {
-      this.playRandomTungTauntSound();
-    }
+    this.playRandomReactionSound();
   }
 
   /** Debug: end match immediately as win/lose for the player. */

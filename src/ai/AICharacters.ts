@@ -3,8 +3,8 @@ import type { AICharacterProfile } from './types.js';
 /** Ordered career ladder — difficulty ramps with personality variety. */
 export const CAREER_OPPONENTS: AICharacterProfile[] = [
   {
-    id: 'tung',
-    name: 'Tung',
+    id: 'tungo',
+    name: 'Tungo Biliardo',
     tier: 'apprentice',
     personality: 'funny',
     accuracy: 0.42,

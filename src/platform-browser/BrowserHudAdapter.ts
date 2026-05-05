@@ -9,6 +9,8 @@ export type BrowserHudAdapterOptions = {
   toggleSound?: () => boolean;
   /** Returns current mute state for initial icon sync. */
   isSoundMuted?: () => boolean;
+  /** Short UI click SFX for HUD buttons (mute-aware via HUD). */
+  playUiClick?: () => void;
 };
 
 /** Binds DOM HUD to `HudState` and routes chrome actions to input commands. */
@@ -25,6 +27,7 @@ export class BrowserHudAdapter {
     this.hud = new HUD(root, () => engine.getHudState(), pushCommand, base, {
       toggleSound: options?.toggleSound,
       isSoundMuted: options?.isSoundMuted,
+      playUiClick: options?.playUiClick,
     });
   }
 

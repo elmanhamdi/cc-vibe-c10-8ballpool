@@ -4,6 +4,12 @@ export type CueShopItem = {
   price: number;
   description?: string;
   accent?: string;
+  /** Shop preview only — colors mirror `CUE_STYLE_TABLE` (`ThreeSceneAdapter.ts`). */
+  preview?: {
+    shaft: string;
+    butt: string;
+    tip: string;
+  };
   stats: {
     /** Power scaling multiplier (1 = baseline). */
     power: number;
@@ -22,6 +28,7 @@ export const SHOP_CUE_CATALOG: readonly CueShopItem[] = [
     price: 0,
     description: 'Standard wood cue',
     accent: '#f2c542',
+    preview: { shaft: '#8b5a2b', butt: '#3a2614', tip: '#4d6fa8' },
     stats: { power: 1, aim: 1, spin: 1 },
   },
   {
@@ -30,6 +37,7 @@ export const SHOP_CUE_CATALOG: readonly CueShopItem[] = [
     price: 80,
     description: 'Balanced starter upgrade',
     accent: '#b58b5a',
+    preview: { shaft: '#c8a273', butt: '#6b4423', tip: '#4d6fa8' },
     stats: { power: 1.05, aim: 1.05, spin: 1.02 },
   },
   {
@@ -38,6 +46,7 @@ export const SHOP_CUE_CATALOG: readonly CueShopItem[] = [
     price: 140,
     description: 'Lightweight modern fiber build',
     accent: '#5cf0c2',
+    preview: { shaft: '#e8efe9', butt: '#2c4d44', tip: '#3f6a98' },
     stats: { power: 1.08, aim: 1.08, spin: 1.06 },
   },
   {
@@ -46,6 +55,7 @@ export const SHOP_CUE_CATALOG: readonly CueShopItem[] = [
     price: 220,
     description: 'Bright neon club finish',
     accent: '#ff6f91',
+    preview: { shaft: '#ff6f91', butt: '#ff3d72', tip: '#3a2230' },
     stats: { power: 1.12, aim: 1.1, spin: 1.1 },
   },
   {
@@ -54,6 +64,7 @@ export const SHOP_CUE_CATALOG: readonly CueShopItem[] = [
     price: 320,
     description: 'Low-deflection carbon with laser sight decals',
     accent: '#66b6ff',
+    preview: { shaft: '#1c2230', butt: '#101822', tip: '#4d6fa8' },
     stats: { power: 1.15, aim: 1.18, spin: 1.14 },
   },
   {
@@ -62,6 +73,7 @@ export const SHOP_CUE_CATALOG: readonly CueShopItem[] = [
     price: 480,
     description: 'Tour-grade forged shaft and inlays',
     accent: '#f4d35e',
+    preview: { shaft: '#d9b34a', butt: '#3b2a14', tip: '#3f6a98' },
     stats: { power: 1.2, aim: 1.24, spin: 1.2 },
   },
 ];

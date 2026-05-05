@@ -19,9 +19,9 @@ export interface AimPreviewResult {
   cueGhost: Segment2D | null;
 }
 
-const MAX_RAY = 720;
-const GHOST_OBJ = 175;
-const GHOST_CUE = 155;
+const MAX_RAY = 360;
+const GHOST_OBJ = 95;
+const GHOST_CUE = 80;
 
 /**
  * Ray–circle hit: C + t d, t>0, |P−O| = R (R = sum of ball radii).
@@ -86,17 +86,23 @@ export function computeAimPreview(
   const cux = cgx / cglen;
   const cuy = cgy / cglen;
 
+  /** Equal-mass elastic split: object ball gets v*cos(theta), cue ball keeps v*sin(theta). */
+  const cos = Math.max(0, Math.min(1, dot));
+  const sin = Math.sqrt(Math.max(0, 1 - cos * cos));
+  const objLen = GHOST_OBJ * cos;
+  const cueLen = GHOST_CUE * sin;
+
   const objectGhost: Segment2D = {
     x0: Chx,
     y0: Chy,
-    x1: Chx + Lux * GHOST_OBJ,
-    y1: Chy + Luy * GHOST_OBJ,
+    x1: Chx + Lux * objLen,
+    y1: Chy + Luy * objLen,
   };
   const cueGhost: Segment2D = {
     x0: Chx,
     y0: Chy,
-    x1: Chx + cux * GHOST_CUE,
-    y1: Chy + cuy * GHOST_CUE,
+    x1: Chx + cux * cueLen,
+    y1: Chy + cuy * cueLen,
   };
 
   return { show: true, cueToHit, objectGhost, cueGhost };

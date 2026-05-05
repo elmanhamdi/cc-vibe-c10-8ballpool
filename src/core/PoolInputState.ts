@@ -18,11 +18,14 @@ export class PoolInputState {
   /** 0–1 pull while charging (read by render state). */
   charge01 = MIN_SHOT_POWER;
   private lastTable: { x: number; y: number } | null = null;
+  /** Relative aim drag anchor: pointer + aim angle captured at drag start (around cue ball). */
+  private aimDragAnchor: { pointerAngle: number; aimAngle: number } | null = null;
 
   resetStroke(): void {
     this.strokeMode = 'idle';
     this.lastTable = null;
     this.charge01 = MIN_SHOT_POWER;
+    this.aimDragAnchor = null;
   }
 
   /** Visual pull 0–1 for cue draw (charge mode or AI preview scale). */
@@ -101,6 +104,16 @@ export class PoolInputState {
         this.lastTable = { x: tableX, y: tableY };
         this.strokeMode = 'aim';
         this.aimDragging = true;
+        const dx0 = tableX - ctx.cueX;
+        const dy0 = tableY - ctx.cueY;
+        if (dx0 * dx0 + dy0 * dy0 >= 16) {
+          this.aimDragAnchor = {
+            pointerAngle: Math.atan2(dy0, dx0),
+            aimAngle: this.aimAngle,
+          };
+        } else {
+          this.aimDragAnchor = null;
+        }
         continue;
       }
 
@@ -109,21 +122,30 @@ export class PoolInputState {
         if (this.aimDragging) {
           const dx = tableX - ctx.cueX;
           const dy = tableY - ctx.cueY;
-          if (dx * dx + dy * dy >= 16) {
-            this.aimAngle = Math.atan2(dy, dx);
+          if (dx * dx + dy * dy < 16) continue;
+          const cur = Math.atan2(dy, dx);
+          if (!this.aimDragAnchor) {
+            this.aimDragAnchor = { pointerAngle: cur, aimAngle: this.aimAngle };
+            continue;
           }
+          let delta = cur - this.aimDragAnchor.pointerAngle;
+          while (delta > Math.PI) delta -= 2 * Math.PI;
+          while (delta < -Math.PI) delta += 2 * Math.PI;
+          this.aimAngle = this.aimDragAnchor.aimAngle + delta;
         }
         continue;
       }
 
       if (phase === 'up') {
         this.aimDragging = false;
+        this.aimDragAnchor = null;
         this.resetStroke();
         continue;
       }
 
       if (phase === 'cancel') {
         this.aimDragging = false;
+        this.aimDragAnchor = null;
         this.resetStroke();
       }
     }

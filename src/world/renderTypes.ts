@@ -176,6 +176,7 @@ export interface HudState {
       price: number;
       description?: string;
       accent?: string;
+      preview?: { shaft: string; butt: string; tip: string };
       stats?: { power: number; aim: number; spin: number };
     }[];
   };

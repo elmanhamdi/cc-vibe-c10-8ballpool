@@ -901,25 +901,31 @@ export class HUD {
           actionData = `data-buy="${item.id}"`;
           actionDisabled = !canBuy;
         }
-        const accent = item.accent ? `style="--accent:${item.accent}"` : '';
-        const stats = item.stats
-          ? `<div class="shop-card-stats">
-              <span>Power ${item.stats.power.toFixed(2)}</span>
-              <span>Aim ${item.stats.aim.toFixed(2)}</span>
-              <span>Spin ${item.stats.spin.toFixed(2)}</span>
-            </div>`
-          : '';
+        const styleParts: string[] = [];
+        if (item.accent) styleParts.push(`--accent:${item.accent}`);
+        const prev = item.preview;
+        if (prev) {
+          styleParts.push(`--cue-shaft:${prev.shaft}`);
+          styleParts.push(`--cue-butt:${prev.butt}`);
+          styleParts.push(`--cue-tip:${prev.tip}`);
+        }
+        const cardStyle = styleParts.length > 0 ? `style="${styleParts.join(';')}"` : '';
         return `
-        <div class="shop-card" data-cue="${item.id}" ${accent}>
+        <div class="shop-card" data-cue="${item.id}" ${cardStyle}>
           <div class="shop-card-head">
             <div class="shop-card-name">${item.name}</div>
             <div class="shop-card-price">${formatNumber(item.price)} 🪙</div>
           </div>
-          <div class="shop-card-desc">${item.description ?? ''}</div>
-          ${stats}
+          <div class="shop-card-cue" aria-hidden="true">
+            <span class="shop-card-cue-tip"></span>
+            <span class="shop-card-cue-ferrule"></span>
+            <span class="shop-card-cue-shaft"></span>
+            <span class="shop-card-cue-accent"></span>
+            <span class="shop-card-cue-butt"></span>
+            <span class="shop-card-cue-cap"></span>
+          </div>
           <div class="shop-card-actions">
             <button class="btn ${actionClass}" ${actionData} ${actionDisabled ? 'data-disabled="true"' : ''}>${actionLabel}</button>
-            <div class="shop-card-tag">${isOwned ? (isEquipped ? 'Equipped' : 'Owned') : ''}</div>
           </div>
         </div>`;
       })

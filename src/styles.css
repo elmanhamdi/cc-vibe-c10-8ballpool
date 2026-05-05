@@ -969,7 +969,53 @@ body {
   grid-template-columns: 1fr;
   gap: 10px;
   overflow-y: auto;
-  padding-right: 4px;
+  padding-right: 10px;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(120, 200, 255, 0.45) rgba(255, 255, 255, 0.04);
+  /* iOS momentum scroll + keep glow inside the modal padding */
+  -webkit-overflow-scrolling: touch;
+  mask-image: linear-gradient(
+    180deg,
+    transparent 0,
+    #000 14px,
+    #000 calc(100% - 14px),
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    180deg,
+    transparent 0,
+    #000 14px,
+    #000 calc(100% - 14px),
+    transparent 100%
+  );
+}
+
+.hud-shop-grid::-webkit-scrollbar {
+  width: 8px;
+}
+
+.hud-shop-grid::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 999px;
+  margin: 8px 0;
+}
+
+.hud-shop-grid::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(150, 220, 255, 0.7), rgba(90, 160, 220, 0.55));
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 0 6px rgba(120, 200, 255, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+.hud-shop-grid::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(180, 235, 255, 0.85), rgba(110, 180, 235, 0.7));
+}
+
+.hud-shop-grid::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 .shop-card {
@@ -1000,10 +1046,64 @@ body {
   opacity: 0.85;
 }
 
-.shop-card-desc {
-  margin: 6px 0 10px;
-  font-size: 12px;
-  opacity: 0.8;
+.shop-card-cue {
+  margin: 10px 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  height: 16px;
+  filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.45));
+}
+
+.shop-card-cue > span {
+  display: block;
+  height: 100%;
+  border-top: 1px solid rgba(255, 255, 255, 0.18);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.5);
+}
+
+.shop-card-cue-tip {
+  width: 5%;
+  background: var(--cue-tip, #4d6fa8);
+  border-radius: 6px 1px 1px 6px;
+  height: 70%;
+}
+
+.shop-card-cue-ferrule {
+  width: 3%;
+  background: #f3ece0;
+  height: 80%;
+}
+
+.shop-card-cue-shaft {
+  flex: 1;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--cue-shaft, #8b5a2b) 80%, #fff 20%),
+    var(--cue-shaft, #8b5a2b) 50%,
+    color-mix(in srgb, var(--cue-shaft, #8b5a2b) 70%, #000 30%)
+  );
+}
+
+.shop-card-cue-accent {
+  width: 4%;
+  background: var(--accent, #f2c542);
+}
+
+.shop-card-cue-butt {
+  width: 28%;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--cue-butt, #3a2614) 80%, #fff 20%),
+    var(--cue-butt, #3a2614) 55%,
+    color-mix(in srgb, var(--cue-butt, #3a2614) 65%, #000 35%)
+  );
+}
+
+.shop-card-cue-cap {
+  width: 3%;
+  background: #141414;
+  border-radius: 1px 6px 6px 1px;
 }
 
 .shop-card-actions {

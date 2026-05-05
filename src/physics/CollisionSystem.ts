@@ -5,9 +5,9 @@ import { Vec2 } from './Vec2.js';
 
 /** Higher = livelier ball–ball spread (e.g. break). */
 const RESTITUTION = 0.985;
-const CUSHION_RESTITUTION = 0.88;
-/** Lower = less drag so clusters break apart more visibly. */
-const FRICTION = 1.05;
+const CUSHION_RESTITUTION = 0.9;
+/** Lower = less drag so balls roll farther / feel less heavy. */
+const FRICTION = 0.6;
 const ENGLISH_DECAY = 0.32;
 const CURL_STRENGTH = 3.8;
 const STOP_EPS = 0.012;
@@ -189,8 +189,8 @@ export class CollisionSystem {
   }
 
   applyShot(angle: number, power01: number, spinX: number, spinY: number): void {
-    /** Global cue strength (was 1000; slightly softer strokes overall). */
-    const speed = 830 * (0.18 + 0.82 * power01);
+    /** Global cue strength. */
+    const speed = 630 * (0.18 + 0.82 * power01);
     const c = Math.cos(angle);
     const s = Math.sin(angle);
     this.cue.vel.set(c * speed, s * speed);

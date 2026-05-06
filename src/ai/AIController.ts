@@ -1,11 +1,18 @@
-import { Vec2 } from '../physics/Vec2.js';
 import type { Ball } from '../physics/Ball.js';
-import type { Table } from '../physics/Table.js';
-import type { Pocket } from '../physics/Table.js';
-import type { RulesContext } from '../gameplay/rules.types.js';
-import { kindToGroup } from '../gameplay/rules.types.js';
+import type { CushionSegment, Pocket, Table } from '../physics/Table.js';
+import { kindToGroup, type RulesContext } from '../gameplay/rules.types.js';
 import type { AICharacterProfile } from './types.js';
-import { tierParams } from './DifficultyProfiles.js';
+import { tierParams, type TierParams } from './DifficultyProfiles.js';
+import {
+  evaluateBankShot,
+  evaluateCombination,
+  evaluateDirectShot,
+  ownTargetsFor,
+  type AIWorldView,
+  type ShotCandidate,
+} from './ShotEvaluator.js';
+import { dist, sweptSegmentBlocked, type Pt } from './geometry.js';
+import { pocketThroatAcceptance } from './PocketGeometry.js';
 
 export interface AIShotPlan {
   angle: number;
@@ -16,39 +23,10 @@ export interface AIShotPlan {
   cueId?: string;
 }
 
-export interface AIWorldView {
-  table: Table;
-  balls: Ball[];
-  cue: Ball;
-  rules: RulesContext;
-}
-
-/** Ghost-ball contact point (2r back from object along pocket line). */
-function ghostBallNearPocket(obj: Vec2, pocket: Vec2, r: number): { x: number; y: number } {
-  const dx = pocket.x - obj.x;
-  const dy = pocket.y - obj.y;
-  const len = Math.hypot(dx, dy);
-  if (len < 1e-4) return { x: obj.x, y: obj.y };
-  const ux = dx / len;
-  const uy = dy / len;
-  return { x: obj.x - ux * 2.0 * r, y: obj.y - uy * 2.0 * r };
-}
-
-function aimAngleToPoint(cue: Vec2, target: { x: number; y: number }): number {
-  return Math.atan2(target.y - cue.y, target.x - cue.x);
-}
+export type { AIWorldView };
 
 /** Corner pocket ids (near rails); prefer these when AI runs the 8. */
 const CORNER_POCKET_IDS = new Set([0, 2, 3, 5]);
-
-function pocketsForRanking(table: Table, obj: Ball): readonly Pocket[] {
-  if (obj.kind !== 'eight') return table.pockets;
-  return [...table.pockets].sort((a, b) => {
-    const ac = CORNER_POCKET_IDS.has(a.id) ? 0 : 1;
-    const bc = CORNER_POCKET_IDS.has(b.id) ? 0 : 1;
-    return ac - bc;
-  });
-}
 
 export class AIController {
   constructor(private profile: AICharacterProfile) {}
@@ -60,121 +38,311 @@ export class AIController {
   compute(view: AIWorldView): AIShotPlan {
     const tier = tierParams(this.profile.tier);
     const rng = Math.random;
-
     const targets = pickLegalTargets(view);
-    let best: {
-      angle: number;
-      pow: number;
-      score: number;
-      cut: number;
-      d1: number;
-      d2: number;
-    } | null = null;
+    const ownTargets = ownTargetsFor(view);
+
+    const candidates: ShotCandidate[] = [];
 
     if (targets.length) {
       for (const obj of targets) {
         for (const pk of pocketsForRanking(view.table, obj)) {
-          const ghost = ghostBallNearPocket(obj.pos, pk.pos, obj.radius);
-          const angle = aimAngleToPoint(view.cue.pos, ghost);
-          const d1 = dist(view.cue.pos, obj.pos);
-          const d2 = dist(obj.pos, pk.pos);
-          const distSum = d1 + d2;
+          const direct = evaluateDirectShot(view, obj, pk, tier, ownTargets);
+          if (direct) candidates.push(direct);
 
-          const cut = cutQuality(view.cue.pos, obj.pos, pk.pos);
-          const clear = clearanceFactor(view, obj, view.cue, ghost, pk.pos);
-          const scratch = scratchRisk(view.cue.pos, obj.pos, pk.pos);
-          const pocketApp = pocketApproachFactor(view.table, obj.pos, pk.pos);
-          const cueScr = cueScratchFactor(view, ghost);
+          if (tier.allowBank) {
+            for (const rail of view.table.cushions) {
+              if (rail.role !== 'rail') continue;
+              const bank = evaluateBankShot(view, obj, pk, rail, tier, ownTargets);
+              if (bank) candidates.push(bank);
+            }
+          }
+        }
+      }
 
-          const score =
-            cut ** 1.6 *
-            clear *
-            scratch *
-            pocketApp *
-            cueScr *
-            (1.0 + 220 / (distSum + 60)) *
-            (1 + this.profile.risk * 0.05);
-
-          if (!best || score > best.score) {
-            const cutClamped = Math.max(1e-4, cut);
-            const baseP = 0.32 + d1 / 900 + d2 / 700;
-            const cutBoost = (1 - cutClamped) * 0.18;
-            const powTarget = Math.min(0.92, Math.max(0.28, baseP + cutBoost));
-            best = { angle, pow: powTarget, score, cut: cutClamped, d1, d2 };
+      if (tier.allowCombo) {
+        for (const ball1 of targets) {
+          for (const ball2 of targets) {
+            if (ball1.id === ball2.id) continue;
+            /** Sadece kendi grubu / 8-top kombolar; yasal first-contact kontrolü pickLegalTargets garanti ediyor. */
+            for (const pk of view.table.pockets) {
+              const combo = evaluateCombination(view, ball1, ball2, pk, tier, ownTargets);
+              if (combo) candidates.push(combo);
+            }
           }
         }
       }
     }
 
-    if (best && best.score < 0.04) {
-      const safety = pickSafetyShot(view, targets, this.profile, rng);
-      if (safety) return safety;
+    candidates.sort((a, b) => b.totalScore - a.totalScore);
+    const best = candidates[0] ?? null;
+    const bestDirect = candidates.find((c) => c.kind === 'direct') ?? null;
+
+    let chosen: { angle: number; power01: number; spinX: number; spinY: number } | null = null;
+
+    /**
+     * Master/Expert için safety'e çok erken düşmemek gerekir:
+     * önce pot ihtimali yüksek direct atışları zorla öne çıkar.
+     */
+    if (
+      bestDirect &&
+      bestDirect.potProb > 0.32 &&
+      (!best || best.kind !== 'direct' || best.totalScore <= bestDirect.totalScore + 0.08)
+    ) {
+      chosen = {
+        angle: bestDirect.angle,
+        power01: bestDirect.power01,
+        spinX: bestDirect.spinX,
+        spinY: bestDirect.spinY,
+      };
     }
 
-    let angle = best?.angle ?? -Math.PI / 2 + (rng() - 0.5) * 0.25;
-    let power01 = best?.pow ?? 0.55;
-
-    const acc = 0.35 + this.profile.accuracy * 0.65;
-    const noise = tier.aimNoiseRad * (1.05 - acc) * (rng() - 0.5) * 2 * (0.55 + rng() * 0.45);
-    angle += noise;
-
-    power01 += (rng() - 0.5) * tier.powerJitter * (1 - acc * 0.8);
-    power01 = Math.max(0.18, Math.min(1, power01));
-
-    if (rng() < tier.mistakeChance * (1 - acc * 0.7)) {
-      angle += (rng() - 0.5) * 0.22;
-      power01 *= 0.72 + rng() * 0.28;
+    /**
+     * Eski eşik master'da gereğinden yüksek kalıyordu ve AI pasifleşiyordu.
+     * Yeni eşik, accuracy/risk arttıkça düşer (yüksek tier daha çok pot dener).
+     */
+    const safetyThreshold =
+      0.018 + (1 - this.profile.accuracy) * 0.03 + (1 - this.profile.risk) * 0.015;
+    if (!chosen && (!best || best.totalScore < safetyThreshold)) {
+      const safety = pickAdvancedSafety(view, targets, tier);
+      if (safety) chosen = safety;
     }
 
-    if (rng() < this.profile.risk * 0.28) {
-      power01 = Math.min(1, power01 * 1.08);
-    }
-
-    let spinX = 0;
-    let spinY = 0;
-    if (tier.spinUsage > 0.25) {
-      let nearPocket = false;
-      for (const pk of view.table.pockets) {
-        if (dist(view.cue.pos, pk.pos) < view.cue.radius * 9) {
-          nearPocket = true;
-          break;
-        }
+    if (!chosen) {
+      if (best) {
+        chosen = {
+          angle: best.angle,
+          power01: best.power01,
+          spinX: best.spinX,
+          spinY: best.spinY,
+        };
+      } else {
+        /**
+         * Aşırı pasif kalmamak için "no-candidate" durumda agresif fallback:
+         * en yakın legal topa orta-sert vur.
+         */
+        const fallback = pickAggressiveFallback(view, targets);
+        chosen = fallback ?? {
+          angle: -Math.PI / 2 + (rng() - 0.5) * 0.4,
+          power01: 0.52,
+          spinX: 0,
+          spinY: 0,
+        };
       }
-      if (nearPocket) spinY = -0.35;
     }
 
-    const thinkMs = (1000 + rng() * 2000) * this.profile.pace;
+    /** Tier gürültü ve hata uygulaması — duvar kontrolü plan içinde zaten yapıldı,
+     *  sadece nişan/güç titrek. */
+    const acc = 0.45 + (this.profile.accuracy ?? 0.5) * 0.55;
+    const noiseSpan = tier.aimNoiseRad * (1.05 - acc);
+    chosen.angle += (rng() - 0.5) * 2 * noiseSpan * (0.55 + rng() * 0.45);
 
-    return { angle, power01, spinX, spinY, thinkMs };
+    chosen.power01 += (rng() - 0.5) * tier.powerJitter * (1 - acc * 0.7);
+    chosen.power01 = Math.max(0.2, Math.min(1, chosen.power01));
+
+    if (rng() < tier.mistakeChance * (1 - acc * 0.6)) {
+      /** Düşük tier hatası: ufak nişan kayması + güç eksilmesi. */
+      chosen.angle += (rng() - 0.5) * 0.18;
+      chosen.power01 *= 0.7 + rng() * 0.28;
+    }
+
+    if (rng() < this.profile.risk * 0.22) {
+      chosen.power01 = Math.min(1, chosen.power01 * 1.06);
+    }
+
+    const thinkMs = (1100 + rng() * 1700) * this.profile.pace;
+    return {
+      angle: chosen.angle,
+      power01: chosen.power01,
+      spinX: chosen.spinX,
+      spinY: chosen.spinY,
+      thinkMs,
+    };
   }
 }
 
-function pickSafetyShot(
+function pickAggressiveFallback(
   view: AIWorldView,
   targets: Ball[],
-  profile: AICharacterProfile,
-  rng: () => number,
-): AIShotPlan | null {
+): { angle: number; power01: number; spinX: number; spinY: number } | null {
+  if (!targets.length) return null;
+  let pick = targets[0]!;
+  let best = Infinity;
+  for (const t of targets) {
+    const d = dist(view.cue.pos, t.pos);
+    if (d < best) {
+      best = d;
+      pick = t;
+    }
+  }
+  const angle = Math.atan2(pick.pos.y - view.cue.pos.y, pick.pos.x - view.cue.pos.x);
+  const power01 = Math.max(0.5, Math.min(0.86, 0.54 + best / 1200));
+  return { angle, power01, spinX: 0, spinY: 0 };
+}
+
+/** Snooker-style safety: rakibe en zor pozisyonu bırakacak açı/gücü ara. */
+function pickAdvancedSafety(
+  view: AIWorldView,
+  targets: Ball[],
+  tier: TierParams,
+): { angle: number; power01: number; spinX: number; spinY: number } | null {
   const nonEight = targets.filter((b) => b.kind !== 'eight');
   const list = nonEight.length ? nonEight : targets;
   if (!list.length) return null;
 
-  let pick = list[0]!;
-  let dMin = Infinity;
-  for (const t of list) {
-    const d = dist(view.cue.pos, t.pos);
-    if (d < dMin) {
-      dMin = d;
-      pick = t;
+  /** Aday hedef topları: en yakın 4 tanesi (perforans için). */
+  const sorted = [...list].sort(
+    (a, b) => dist(view.cue.pos, a.pos) - dist(view.cue.pos, b.pos),
+  );
+  const cands = sorted.slice(0, Math.min(4, sorted.length));
+
+  let bestPlan: { angle: number; power01: number; spinX: number; spinY: number } | null = null;
+  let bestSafetyScore = -Infinity;
+
+  for (const tgt of cands) {
+    /** Birkaç farklı vuruş açısı/gücü dene: doğrudan, hafif kesik, soft, medium. */
+    const baseAngle = Math.atan2(tgt.pos.y - view.cue.pos.y, tgt.pos.x - view.cue.pos.x);
+    const variants: { angle: number; power: number }[] = [
+      { angle: baseAngle, power: 0.32 },
+      { angle: baseAngle, power: 0.42 },
+      { angle: baseAngle - 0.06, power: 0.36 },
+      { angle: baseAngle + 0.06, power: 0.36 },
+    ];
+
+    for (const v of variants) {
+      /** Cue path duvardan geçiyorsa atla. */
+      const aimEnd: Pt = {
+        x: view.cue.pos.x + Math.cos(v.angle) * 90,
+        y: view.cue.pos.y + Math.sin(v.angle) * 90,
+      };
+      if (sweptSegmentBlocked(view.cue.pos, aimEnd, view.cue.radius * 0.95, view.table.cushions)) continue;
+
+      /** Tahmini cue son pozisyonu: vuruş yönünde sönen bir hız. */
+      const cueEnd = predictSafetyCueEnd(view.cue.pos, v.angle, v.power, view.table, view.cue.radius);
+      const score = scoreSafetyLeave(view, cueEnd, tier);
+      if (score > bestSafetyScore) {
+        bestSafetyScore = score;
+        bestPlan = { angle: v.angle, power01: v.power, spinX: 0, spinY: 0 };
+      }
     }
   }
 
-  const angle = Math.atan2(pick.pos.y - view.cue.pos.y, pick.pos.x - view.cue.pos.x);
-  const thinkMs = (1000 + rng() * 2000) * profile.pace;
-  return { angle, power01: 0.32, spinX: 0, spinY: 0, thinkMs };
+  return bestPlan;
 }
 
-function cutQuality(cue: Vec2, obj: Vec2, pocket: Vec2): number {
+function predictSafetyCueEnd(cue: Pt, angle: number, power01: number, table: Table, radius: number): Pt {
+  const dx = Math.cos(angle);
+  const dy = Math.sin(angle);
+  const baseRange = 280 + power01 * 700;
+
+  /** Basit: ilk cushion çarpışmasına kadar git, sonra simetri ile yansıt — toplam baseRange uzunluğunda. */
+  let curX = cue.x;
+  let curY = cue.y;
+  let remain = baseRange;
+  let dirX = dx;
+  let dirY = dy;
+  for (let bounce = 0; bounce < 3 && remain > 1; bounce++) {
+    const end: Pt = { x: curX + dirX * remain, y: curY + dirY * remain };
+    /** Hangi rail'e en önce çarpıyor? */
+    let bestT = 1.0;
+    let bestSeg: CushionSegment | null = null;
+    for (const seg of table.cushions) {
+      if (seg.role !== 'rail') continue;
+      /** Ray-segment intersection. */
+      const sx = seg.bx - seg.ax;
+      const sy = seg.by - seg.ay;
+      const denom = dirX * sy - dirY * sx;
+      if (Math.abs(denom) < 1e-6) continue;
+      const t = ((seg.ax - curX) * sy - (seg.ay - curY) * sx) / denom;
+      const u = ((seg.ax - curX) * dirY - (seg.ay - curY) * dirX) / denom;
+      const segLen = Math.hypot(sx, sy) || 1;
+      const radiusInU = radius / segLen;
+      if (t > 0.001 && t < bestT && u >= -radiusInU && u <= 1 + radiusInU) {
+        bestT = t;
+        bestSeg = seg;
+      }
+    }
+    if (!bestSeg) {
+      curX = end.x;
+      curY = end.y;
+      break;
+    }
+    const hitX = curX + dirX * bestT * remain;
+    const hitY = curY + dirY * bestT * remain;
+    /** Reflect dir across rail tangent: d' = 2(d·t)t - d. */
+    const sx = bestSeg.bx - bestSeg.ax;
+    const sy = bestSeg.by - bestSeg.ay;
+    const slen = Math.hypot(sx, sy) || 1;
+    const tx = sx / slen;
+    const ty = sy / slen;
+    const dotT = dirX * tx + dirY * ty;
+    dirX = 2 * dotT * tx - dirX;
+    dirY = 2 * dotT * ty - dirY;
+    curX = hitX + dirX * 0.5;
+    curY = hitY + dirY * 0.5;
+    remain *= 1 - bestT;
+    remain *= 0.78;
+  }
+  return { x: curX, y: curY };
+}
+
+/** Bir cue son pozisyonu için "rakip ne kadar zorlanır" skoru — yüksek = AI için iyi safety. */
+function scoreSafetyLeave(view: AIWorldView, cueEnd: Pt, tier: TierParams): number {
+  /** Rakip "hedefleri": rakip grubu (player) toplarından oluşan listi. */
+  const opponentTargets = view.balls.filter((b) => {
+    if (!b.active || b.kind === 'cue') return false;
+    if (b.kind === 'eight') return false;
+    if (view.rules.openTable) return true;
+    const og = view.rules.playerGroup;
+    if (!og) return true;
+    return kindToGroup(b.kind) === og;
+  });
+
+  if (!opponentTargets.length) return 0;
+
+  /** Rakibin en iyi direct atışı (basit): cuePathBlocked + objectPathBlocked + throat. */
+  let bestOpp = 0;
+  for (const obj of opponentTargets) {
+    for (const pk of view.table.pockets) {
+      const ghost: Pt = ghostFor(obj.pos, pk.pos, obj.radius);
+      const cueOk = !sweptSegmentBlocked(cueEnd, ghost, view.cue.radius, view.table.cushions);
+      if (!cueOk) continue;
+      const dirAngle = Math.atan2(pk.pos.y - obj.pos.y, pk.pos.x - obj.pos.x);
+      const throat = pocketThroatAcceptance(view.table, pk, dirAngle);
+      if (throat < 0.18) continue;
+      const cut = simpleCut(cueEnd, obj.pos, pk.pos);
+      const d1 = dist(cueEnd, obj.pos);
+      const d2 = dist(obj.pos, pk.pos);
+      const distFactor = 220 / (220 + d1 + d2);
+      const oppScore = Math.pow(cut, 1.4) * throat * distFactor;
+      if (oppScore > bestOpp) bestOpp = oppScore;
+    }
+  }
+
+  /** Rail yakınında mı? Banta yapışmış cue rakibi zorlar. */
+  const t = view.table;
+  const margin = view.cue.radius * 1.5;
+  const railClose =
+    cueEnd.x < t.playableMinX + margin ||
+    cueEnd.x > t.playableMaxX - margin ||
+    cueEnd.y < t.playableMinY + margin ||
+    cueEnd.y > t.playableMaxY - margin;
+  const railBonus = railClose ? 0.18 : 0;
+
+  /** Lookahead 1: rakibin en iyi atışını ne kadar zorlaştırdık. */
+  const denyScore = 1 - bestOpp;
+  const base = denyScore + railBonus;
+  /** Yüksek tier daha agresif safety oynar (rakibe daha zoru bırakmaya çalışır). */
+  return base + tier.safetyAggression * 0.05;
+}
+
+function ghostFor(obj: Pt, pocket: Pt, r: number): Pt {
+  const dx = pocket.x - obj.x;
+  const dy = pocket.y - obj.y;
+  const len = Math.hypot(dx, dy) || 1;
+  return { x: obj.x - (dx / len) * 2 * r, y: obj.y - (dy / len) * 2 * r };
+}
+
+function simpleCut(cue: Pt, obj: Pt, pocket: Pt): number {
   const v1x = obj.x - cue.x;
   const v1y = obj.y - cue.y;
   const v2x = pocket.x - obj.x;
@@ -183,100 +351,16 @@ function cutQuality(cue: Vec2, obj: Vec2, pocket: Vec2): number {
   const len2 = Math.hypot(v2x, v2y);
   if (len1 < 1e-4 || len2 < 1e-4) return 0;
   const cos = (v1x * v2x + v1y * v2y) / (len1 * len2);
-  const clamped = Math.max(0, Math.min(1, cos));
-  return clamped ** 2;
+  return Math.max(0, Math.min(1, cos));
 }
 
-function clearanceFactor(
-  view: AIWorldView,
-  target: Ball,
-  cue: Ball,
-  ghost: { x: number; y: number },
-  pocketPos: Vec2,
-): number {
-  const segs = [
-    { a: cue.pos, b: ghost, ignoreCue: true },
-    { a: target.pos, b: pocketPos, ignoreCue: false },
-  ];
-  const threshold = target.radius * 2.6;
-  let min = Infinity;
-
-  for (const s of segs) {
-    for (const b of view.balls) {
-      if (!b.active) continue;
-      if (b.id === target.id) continue;
-      if (s.ignoreCue && b.id === cue.id) continue;
-      const d = distPointToSegment(b.pos, s.a, s.b);
-      if (d < min) min = d;
-    }
-  }
-
-  if (!Number.isFinite(min)) return 1;
-  if (min < 1.05 * target.radius) return 0.04;
-  if (min >= threshold) return 1;
-  return Math.max(0.3, min / threshold);
-}
-
-function scratchRisk(cuePos: Vec2, objPos: Vec2, pocketPos: Vec2): number {
-  const v1x = objPos.x - cuePos.x;
-  const v1y = objPos.y - cuePos.y;
-  const v2x = pocketPos.x - cuePos.x;
-  const v2y = pocketPos.y - cuePos.y;
-  const len1 = Math.hypot(v1x, v1y);
-  const len2 = Math.hypot(v2x, v2y);
-  if (len1 < 1e-4 || len2 < 1e-4) return 1;
-  const cos = (v1x * v2x + v1y * v2y) / (len1 * len2);
-  if (cos > 0.96) return 0.72;
-  if (cos > 0.9) return 0.86;
-  return 1;
-}
-
-/** Penalize steep entry vs table-center → pocket axis (rough throat alignment). */
-function pocketApproachFactor(table: Table, obj: Vec2, pocket: Vec2): number {
-  const pcx = table.width * 0.5;
-  const pcy = table.height * 0.5;
-  const ix = pcx - pocket.x;
-  const iy = pcy - pocket.y;
-  const inLen = Math.hypot(ix, iy);
-  if (inLen < 1e-4) return 1;
-  const ax = pocket.x - obj.x;
-  const ay = pocket.y - obj.y;
-  const aLen = Math.hypot(ax, ay);
-  if (aLen < 1e-4) return 1;
-  const cos = (ax * ix + ay * iy) / (aLen * inLen);
-  const cos60 = Math.cos((60 * Math.PI) / 180);
-  if (cos >= cos60) return 1;
-  return Math.max(0.35, (cos + 0.1) / (cos60 + 0.1));
-}
-
-/** Cue path toward ghost passes too close to a pocket — scratch risk. */
-function cueScratchFactor(view: AIWorldView, ghost: { x: number; y: number }): number {
-  let pen = 1;
-  for (const pk of view.table.pockets) {
-    const dLine = distPointToSegment(pk.pos, view.cue.pos, ghost);
-    if (dLine < view.cue.radius * 1.8 && dist(view.cue.pos, pk.pos) < view.cue.radius * 10) {
-      pen *= 0.72;
-    }
-  }
-  return pen;
-}
-
-function distPointToSegment(p: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }): number {
-  const abx = b.x - a.x;
-  const aby = b.y - a.y;
-  const apx = p.x - a.x;
-  const apy = p.y - a.y;
-  const abLenSq = abx * abx + aby * aby;
-  if (abLenSq < 1e-8) return Math.hypot(apx, apy);
-  let t = (apx * abx + apy * aby) / abLenSq;
-  t = Math.max(0, Math.min(1, t));
-  const cx = a.x + abx * t;
-  const cy = a.y + aby * t;
-  return Math.hypot(p.x - cx, p.y - cy);
-}
-
-function dist(a: Vec2, b: Vec2): number {
-  return Math.hypot(a.x - b.x, a.y - b.y);
+function pocketsForRanking(table: Table, obj: Ball): readonly Pocket[] {
+  if (obj.kind !== 'eight') return table.pockets;
+  return [...table.pockets].sort((a, b) => {
+    const ac = CORNER_POCKET_IDS.has(a.id) ? 0 : 1;
+    const bc = CORNER_POCKET_IDS.has(b.id) ? 0 : 1;
+    return ac - bc;
+  });
 }
 
 function pickLegalTargets(view: AIWorldView): Ball[] {

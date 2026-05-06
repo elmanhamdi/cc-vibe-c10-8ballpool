@@ -118,6 +118,11 @@ export class HUD {
   private readonly matchIntroTitle: HTMLElement;
   private readonly matchIntroSub: HTMLElement;
   private matchIntroTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Center yellow popup (group assignment / foul). */
+  private readonly hudNotice: HTMLElement;
+  private readonly hudNoticeText: HTMLElement;
+  private hudNoticeTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastHudNoticeBeatId = -1;
   /** `${defId}:${currentRound}` of the most recently introduced match — prevents re-triggering. */
   private lastMatchIntroKey: string | null = null;
   private readonly menuAccountLevel: HTMLElement;
@@ -550,6 +555,11 @@ export class HUD {
     this.matchIntroTitle = this.matchIntro.querySelector('#hud-match-intro-title') as HTMLElement;
     this.matchIntroSub = this.matchIntro.querySelector('#hud-match-intro-sub') as HTMLElement;
 
+    this.hudNotice = el('div', 'hud-notice');
+    this.hudNotice.setAttribute('aria-hidden', 'true');
+    this.hudNotice.innerHTML = `<div class="hud-notice-text" id="hud-notice-text"></div>`;
+    this.hudNoticeText = this.hudNotice.querySelector('#hud-notice-text') as HTMLElement;
+
     this.powerBarWrap = el('div', 'hud-power-bar interactive');
     this.powerBarWrap.setAttribute('aria-label', 'Shot power — drag cue down, release to shoot');
     this.powerBarWrap.innerHTML = `
@@ -611,6 +621,7 @@ export class HUD {
       this.modeSelectOverlay,
       this.tournamentOverlay,
       this.matchIntro,
+      this.hudNotice,
       this.nextModal,
       this.soundBtn,
       this.powerBarWrap,
@@ -1152,6 +1163,8 @@ export class HUD {
       this.rewardWin.style.display = 'none';
     }
 
+    this.syncHudNotice(eb);
+
     this.renderShopPanel(h);
 
     this.applyPowerBarVisibility(h);
@@ -1664,6 +1677,48 @@ export class HUD {
     this.lastMatchIntroKey = null;
   }
 
+  private syncHudNotice(eb: NonNullable<HudState['eightBall']>): void {
+    const notice = eb.hudNotice;
+    /** Reaction varsa popup'ı küçük + yukarıda göster (kapatma değil; üst üste binmesin). */
+    const compact = eb.opponentReaction != null;
+    this.hudNotice.classList.toggle('hud-notice--compact', compact);
+    if (!notice) {
+      if (this.lastHudNoticeBeatId !== -1) {
+        this.hideHudNotice();
+      }
+      return;
+    }
+    if (notice.beatId === this.lastHudNoticeBeatId) return;
+    this.lastHudNoticeBeatId = notice.beatId;
+    this.showHudNotice(notice.kind, notice.text, notice.durationSec);
+  }
+
+  private showHudNotice(kind: 'group' | 'foul', text: string, durationSec: number): void {
+    if (this.hudNoticeTimer != null) {
+      clearTimeout(this.hudNoticeTimer);
+      this.hudNoticeTimer = null;
+    }
+    this.hudNoticeText.textContent = text;
+    this.hudNotice.setAttribute('data-kind', kind);
+    this.hudNotice.style.setProperty('--hud-notice-dur', `${durationSec}s`);
+    this.hudNotice.classList.remove('show');
+    void this.hudNotice.offsetWidth;
+    this.hudNotice.classList.add('show');
+    this.hudNoticeTimer = setTimeout(() => {
+      this.hudNotice.classList.remove('show');
+      this.hudNoticeTimer = null;
+    }, Math.round(durationSec * 1000));
+  }
+
+  private hideHudNotice(): void {
+    if (this.hudNoticeTimer != null) {
+      clearTimeout(this.hudNoticeTimer);
+      this.hudNoticeTimer = null;
+    }
+    this.hudNotice.classList.remove('show');
+    this.lastHudNoticeBeatId = -1;
+  }
+
   private renderModeSelectPage(h: HudState): void {
     const coins = h.profile?.coins ?? 0;
     const catalog = h.tournamentCatalog ?? [];
@@ -2104,6 +2159,7 @@ export class HUD {
     this.hideModeSelectOverlay();
     this.hideTournamentOverlay();
     this.hideMatchIntro();
+    this.hideHudNotice();
     this.hideNextMatchModal();
     this.hideLevelOverlay();
     this.clearHudTopBand();

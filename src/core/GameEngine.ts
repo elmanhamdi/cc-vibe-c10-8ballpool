@@ -12,6 +12,8 @@ import {
 } from '../gameplay/RulesEngine.js';
 import { AIController, type AIShotPlan } from '../ai/AIController.js';
 import { CAREER_OPPONENTS } from '../ai/AICharacters.js';
+import { evaluateDirectShot, ownTargetsFor, type AIWorldView as EvaluatorWorldView } from '../ai/ShotEvaluator.js';
+import { tierParams } from '../ai/DifficultyProfiles.js';
 import {
   pickTungoLine,
   randomTimeReactionKind,
@@ -160,6 +162,16 @@ export class GameEngine implements Game {
     portraitAssetId: string | null;
   } | null = null;
   private opponentReactionBeatSeq = 0;
+
+  /** Center yellow notice popup (group assigned / foul). */
+  private hudNotice: {
+    kind: 'group' | 'foul';
+    text: string;
+    ttl: number;
+    durationTotal: number;
+    beatId: number;
+  } | null = null;
+  private hudNoticeBeatSeq = 0;
 
   /** Tungo Biliardo — consecutive pots where the player keeps the table (for “scared” beat). */
   private tungoPlayerRun = 0;
@@ -391,6 +403,7 @@ export class GameEngine implements Game {
     this.turnClock.beginTurn('player');
     this.dialogue.clearBubble();
     this.opponentReaction = null;
+    this.hudNotice = null;
     this.tungoPlayerRun = 0;
     this.tungoLastBallReactionUsed = false;
     this.tungoMatchEndCry = null;
@@ -567,6 +580,10 @@ export class GameEngine implements Game {
       this.opponentReaction.ttl -= dt;
       if (this.opponentReaction.ttl <= 0) this.opponentReaction = null;
     }
+    if (this.hudNotice) {
+      this.hudNotice.ttl -= dt;
+      if (this.hudNotice.ttl <= 0) this.hudNotice = null;
+    }
 
     if (this.phase !== 'MainMenu' && this.phase !== 'MatchEnd') {
       this.tickAiCameraBlend(dt);
@@ -658,6 +675,87 @@ export class GameEngine implements Game {
     }));
   }
 
+  private pickAiLegalTargetsForScoring(view: EvaluatorWorldView) {
+    const out: (typeof view.balls)[number][] = [];
+    const aiGroup = view.rules.aiGroup;
+    const groupRemaining = (g: 'solid' | 'stripe') =>
+      view.balls.some((b) => b.active && kindToGroup(b.kind) === g);
+    const aiNeedsEight = aiGroup && !groupRemaining(aiGroup);
+
+    for (const b of view.balls) {
+      if (!b.active || b.kind === 'cue') continue;
+      if (b.kind === 'eight') {
+        if (aiNeedsEight) out.push(b);
+        continue;
+      }
+      if (view.rules.openTable) {
+        out.push(b);
+        continue;
+      }
+      if (aiGroup && kindToGroup(b.kind) === aiGroup) out.push(b);
+    }
+    if (!out.length) {
+      const avoidEightOpen =
+        view.rules.openTable &&
+        view.balls.some((x) => x.active && (x.kind === 'solid' || x.kind === 'stripe'));
+      for (const b of view.balls) {
+        if (!b.active || b.kind === 'cue') continue;
+        if (avoidEightOpen && b.kind === 'eight') continue;
+        out.push(b);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Ball-in-hand pozisyon puanı: AI için en iyi direct pot + leave kombinasyonu.
+   * Yüksek skor = daha avantajlı yerleşim.
+   */
+  private scoreAiCueBallInHandPosition(x: number, y: number): number {
+    const cue = this.physics.cue;
+    const ox = cue.pos.x;
+    const oy = cue.pos.y;
+    const ovx = cue.vel.x;
+    const ovy = cue.vel.y;
+    const oex = cue.english.x;
+    const oey = cue.english.y;
+
+    cue.pos.set(x, y);
+    cue.vel.set(0, 0);
+    cue.english.set(0, 0);
+
+    const view: EvaluatorWorldView = {
+      table: this.table,
+      balls: this.physics.balls,
+      cue: this.physics.cue,
+      rules: this.rulesCtx,
+    };
+    const ownTargets = ownTargetsFor(view);
+    const legalTargets = this.pickAiLegalTargetsForScoring(view);
+    const tier = tierParams(this.getOpponent().tier);
+
+    let best = -Infinity;
+    for (const obj of legalTargets) {
+      for (const pk of this.table.pockets) {
+        const cand = evaluateDirectShot(view, obj, pk, tier, ownTargets);
+        if (!cand) continue;
+        const s = cand.totalScore + cand.potProb * 0.85;
+        if (s > best) best = s;
+      }
+    }
+
+    cue.pos.set(ox, oy);
+    cue.vel.set(ovx, ovy);
+    cue.english.set(oex, oey);
+
+    if (best > -Infinity) return best;
+    /** Hiç direct yoksa tamamen rastgele değil: masa ortasına yakınlık bonusu. */
+    const cx = this.table.width * 0.5;
+    const cy = this.table.height * 0.5;
+    const d = Math.hypot(x - cx, y - cy);
+    return -0.15 - d / 1200;
+  }
+
   private resolveTurn(res: TurnResolution, shooter: PlayerId, shot?: ShotOutcome): void {
     if (this.awaitingFirstPlayerBreakShot && this.phase === 'PlayerTurn' && shot === undefined) {
       this.awaitingFirstPlayerBreakShot = false;
@@ -674,6 +772,7 @@ export class GameEngine implements Game {
     }
     this.lastHudReason = res.reason;
     this.maybeTaunt(res, shooter, shot);
+    this.emitTurnNotices(res);
 
     const tungoOpp = this.getOpponent();
     if (tungoOpp.id === 'tungo' && shooter === 'player' && !res.playerWon && !res.playerLost) {
@@ -737,7 +836,12 @@ export class GameEngine implements Game {
         const fromX = this.physics.cue.pos.x;
         const fromY = this.physics.cue.pos.y;
         const target = new Vec2();
-        if (this.physics.tryPickRandomLegalCueHandPosForAi(target)) {
+        if (
+          this.physics.tryPickBestCueHandPosForAi(
+            target,
+            (pos) => this.scoreAiCueBallInHandPosition(pos.x, pos.y),
+          )
+        ) {
           this.aiCueBallPlacementSlide = {
             fromX,
             fromY,
@@ -745,6 +849,13 @@ export class GameEngine implements Game {
             toY: target.y,
             t: 0,
           };
+          /**
+           * Planı doğru pozisyondan hesapla: aksi halde AI slide öncesi eski cue konumuna göre
+           * düşünür ve güçlü fırsatları kaçırır.
+           */
+          this.physics.cue.pos.set(target.x, target.y);
+          this.physics.cue.vel.set(0, 0);
+          this.physics.cue.english.set(0, 0);
         } else {
           this.physics.placeCueBallInKitchen();
         }
@@ -894,6 +1005,32 @@ export class GameEngine implements Game {
     if (Math.abs(this.aiCameraBlend - target) < 0.002) this.aiCameraBlend = target;
     if (this.openingShotCameraReturnActive && this.aiCameraBlend <= 0.002) {
       this.openingShotCameraReturnActive = false;
+    }
+  }
+
+  /** Sarı pop-up bildirim — grup atanması veya faul olduğunda kısa bir süre gösterilir. */
+  private pushHudNotice(kind: 'group' | 'foul', text: string, durationSec = 1.85): void {
+    this.hudNoticeBeatSeq += 1;
+    this.hudNotice = {
+      kind,
+      text,
+      ttl: durationSec,
+      durationTotal: durationSec,
+      beatId: this.hudNoticeBeatSeq,
+    };
+  }
+
+  /** Tur sonucu üzerinden grup atama / faul popup'larını yayınlar. */
+  private emitTurnNotices(res: TurnResolution): void {
+    if (res.playerWon || res.playerLost) return;
+    if (res.assignedGroup) {
+      const playerGroup = res.assignedGroup.player;
+      const text = playerGroup === 'solid' ? "YOU'RE SOLIDS" : "YOU'RE STRIPES";
+      this.pushHudNotice('group', text, 2.1);
+      return;
+    }
+    if (res.foul !== 'none') {
+      this.pushHudNotice('foul', 'FOUL!', 1.7);
     }
   }
 
@@ -1205,6 +1342,14 @@ export class GameEngine implements Game {
           this.physics.cue.active,
         matchEndOpponentPortrait:
           snap.phase === 'MatchEnd' ? this.tungoMatchEndCry : null,
+        hudNotice: this.hudNotice
+          ? {
+              kind: this.hudNotice.kind,
+              text: this.hudNotice.text,
+              beatId: this.hudNotice.beatId,
+              durationSec: this.hudNotice.durationTotal,
+            }
+          : null,
       },
       cueBallInHandCursorHint:
         this.awaitingBallInHandPlacement && this.phase === 'PlayerTurn' && this.physics.cue.active,

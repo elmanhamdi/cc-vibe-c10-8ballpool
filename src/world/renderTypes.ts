@@ -175,6 +175,14 @@ export interface HudState {
     powerBarHint?: boolean;
     /** Match-end opponent reaction (Tungo lose face) when the player wins. */
     matchEndOpponentPortrait?: { portraitAssetId: string; text: string } | null;
+    /** Transient yellow popup over the table (group assignment / foul / etc.). */
+    hudNotice?: null | {
+      kind: 'group' | 'foul';
+      text: string;
+      /** Increments per beat so the HUD can restart CSS animations. */
+      beatId: number;
+      durationSec: number;
+    };
   };
   nextOpponent?: {
     id: string;

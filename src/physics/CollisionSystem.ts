@@ -129,6 +129,50 @@ export class CollisionSystem {
     return false;
   }
 
+  /**
+   * Rakip ball-in-hand: legal adaylar arasında en yüksek skoru veren pozisyonu seç.
+   * `scoreFn` daha yüksek = daha iyi (örn. pot olasılığı + leave).
+   * @returns false ise yasal aday bulunamadı.
+   */
+  tryPickBestCueHandPosForAi(out: Vec2, scoreFn: (pos: Readonly<Vec2>) => number): boolean {
+    const t = this.table;
+    const cue = this.cue;
+    const r = cue.radius;
+    const minX = t.playableMinX + r;
+    const maxX = t.playableMaxX - r;
+    const minY = t.playableMinY + r;
+    const maxY = t.playableMaxY - r;
+    if (maxX <= minX || maxY <= minY) return false;
+
+    let found = false;
+    let bestScore = -Infinity;
+    const bestPos = new Vec2();
+
+    /** Sobol benzeri deterministik dağılım + jitter: geniş alanı hızlı tarar. */
+    const N = 108;
+    for (let k = 0; k < N; k++) {
+      const u = (k + 0.5) / N;
+      const v = ((k * 37) % N + 0.5) / N;
+      const jx = (Math.random() - 0.5) * 0.08;
+      const jy = (Math.random() - 0.5) * 0.08;
+      const tx = minX + Math.max(0, Math.min(1, u + jx)) * (maxX - minX);
+      const ty = minY + Math.max(0, Math.min(1, v + jy)) * (maxY - minY);
+      this.clampCueBallInHandInto(tx, ty, tmpCueHand);
+      if (this.cuePositionOverlapsActiveObjects(tmpCueHand)) continue;
+      const score = scoreFn(tmpCueHand);
+      if (!Number.isFinite(score)) continue;
+      if (!found || score > bestScore) {
+        found = true;
+        bestScore = score;
+        bestPos.copy(tmpCueHand);
+      }
+    }
+
+    if (!found) return false;
+    out.copy(bestPos);
+    return true;
+  }
+
   /** Rakip faul sonrası AI: rastgele uygun nokta, yoksa mutfak. */
   placeCueBallRandomLegalForAi(): void {
     const cue = this.cue;

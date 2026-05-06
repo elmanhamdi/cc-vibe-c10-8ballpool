@@ -231,7 +231,8 @@ function foulMessage(f: FoulKind): string {
 }
 
 /**
- * Açık masada potlanan solid/stripe’lara göre grupları ata (WPA: aynı anda birden fazlaysa en düşük numara).
+ * Açık masada grup atama: SADECE tek bir grupta top/topların potlanması gerekir.
+ * Karışık grup (hem solid hem stripe) potlanırsa hiçbir şey atanmaz, masa açık kalır.
  * `ctx.openTable === true` ve uygun vuruş koşulları yoksa `null`.
  */
 function tryAssignOpenTableFromPotted(
@@ -242,20 +243,21 @@ function tryAssignOpenTableFromPotted(
   pottedMeta: BallMeta[],
 ): { player: BallGroup; ai: BallGroup } | null {
   if (!ctx.openTable) return null;
-  if (!shot.anyBallMoved || !shot.firstHitId) return null;
+  /** `shot.firstHitId === 0` (1-top, ID 0) JS'de falsy; explicit null kontrolü kullan. */
+  if (!shot.anyBallMoved || shot.firstHitId == null) return null;
 
   const first = balls.find((b) => b.id === shot.firstHitId);
   if (!first || first.kind === 'cue') return null;
 
   const groupBalls = pottedMeta.filter((b) => b.kind === 'solid' || b.kind === 'stripe');
   if (!groupBalls.length) return null;
-  let pottedGroupBall = groupBalls[0]!;
-  for (const b of groupBalls) {
-    if (b.number < pottedGroupBall.number) pottedGroupBall = b;
-  }
 
-  const group = kindToGroup(pottedGroupBall.kind);
-  if (!group) return null;
+  /** Karışık potlama: hem solid hem stripe varsa atama yapma — masa açık kalır. */
+  const hasSolid = groupBalls.some((b) => b.kind === 'solid');
+  const hasStripe = groupBalls.some((b) => b.kind === 'stripe');
+  if (hasSolid && hasStripe) return null;
+
+  const group: BallGroup = hasSolid ? 'solid' : 'stripe';
 
   ctx.openTable = false;
   if (shooter === 'player') {

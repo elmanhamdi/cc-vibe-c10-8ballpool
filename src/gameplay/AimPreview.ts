@@ -19,7 +19,10 @@ export interface AimPreviewResult {
   cueGhost: Segment2D | null;
 }
 
-const MAX_RAY = 360;
+/** Upper bound for ray search — practically unlimited; covers the entire table at any aspect. */
+const MAX_RAY = 1_000_000;
+/** Visual length when the aim ray doesn't intersect any ball (cue line into the void). */
+const NO_TARGET_RAY_VISUAL = 4000;
 const GHOST_OBJ = 95;
 const GHOST_CUE = 80;
 
@@ -62,8 +65,8 @@ export function computeAimPreview(
   const cueToHit: Segment2D = { x0: cx, y0: cy, x1: Chx, y1: Chy };
 
   if (!target) {
-    const farX = cx + dx * MAX_RAY;
-    const farY = cy + dy * MAX_RAY;
+    const farX = cx + dx * NO_TARGET_RAY_VISUAL;
+    const farY = cy + dy * NO_TARGET_RAY_VISUAL;
     return {
       show: true,
       cueToHit: { x0: cx, y0: cy, x1: farX, y1: farY },

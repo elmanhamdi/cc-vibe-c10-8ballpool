@@ -490,11 +490,15 @@ export class HUD {
     this.tournamentOverlay.innerHTML = `
       <div class="hud-tournament-modal">
         <div class="hud-tournament-header">
+          <button class="modeselect-back hud-tournament-back" id="hud-tournament-exit" type="button" aria-label="Back to mode select">
+            <span class="modeselect-back-glyph" aria-hidden="true"></span>
+            <span class="modeselect-back-label">Back</span>
+          </button>
           <div>
             <div class="hud-tournament-title" id="hud-tournament-title">Tournament Bracket</div>
             <div class="hud-tournament-sub" id="hud-tournament-sub">Match 1 of 4</div>
           </div>
-          <button class="hud-tournament-exit" id="hud-tournament-exit" type="button" aria-label="Exit tournament">Exit</button>
+          <div class="modeselect-spacer" aria-hidden="true"></div>
         </div>
         <div class="hud-tournament-slots" id="hud-tournament-slots"></div>
         <button class="btn primary hud-tournament-start" id="hud-tournament-start" type="button">Start Match 1</button>
@@ -652,7 +656,8 @@ export class HUD {
         this.showTournamentOverlay();
         return;
       }
-      this.showNextMatchModal();
+      /** Casual win: no "next match" popup, just return to home. */
+      this.pushCommand({ type: 'tournament.exit' });
     });
     this.btnRematch.addEventListener('click', () => {
       this.playHudClickSound();
@@ -900,6 +905,19 @@ export class HUD {
     });
     this.tournamentExitBtn.addEventListener('click', () => {
       this.playHudClickSound();
+      const t = this.getHud().tournament;
+      const untouchedRun =
+        !!t &&
+        t.status === 'active' &&
+        t.currentRound === 0 &&
+        t.record.every((r) => r === 'pending');
+      if (untouchedRun) {
+        /** Tournament entry page back action → return to mode select. */
+        this.hideTournamentOverlay();
+        this.pushCommand({ type: 'tournament.exit' });
+        this.showModeSelectOverlay();
+        return;
+      }
       this.hideTournamentOverlay();
       this.pushCommand({ type: 'tournament.exit' });
     });
@@ -1031,7 +1049,6 @@ export class HUD {
     this.stopConfetti();
     this.stopRingAudio();
     this.hideNextMatchModal();
-    this.hideShopOverlay();
 
     const inMatch = phase !== 'MainMenu';
     this.topStack.style.display = inMatch ? 'flex' : 'none';
@@ -1049,6 +1066,9 @@ export class HUD {
       if (this.modeSelectVisible) this.renderModeSelectPage(h);
       return;
     }
+
+    /** In active gameplay we always close overlays that can block the table. */
+    this.hideShopOverlay();
 
     /**
      * Mode-select / bracket overlays only make sense in the menu/end-card
@@ -1757,10 +1777,6 @@ export class HUD {
             <span class="modeselect-stat-label">MATCHES</span>
             <span class="modeselect-stat-value">1</span>
           </div>
-          <div class="modeselect-stat">
-            <span class="modeselect-stat-label">DIFFICULTY</span>
-            <span class="modeselect-stat-value">${renderDifficultyDots(1)}</span>
-          </div>
         </div>
         <div class="modeselect-prize">
           <div class="modeselect-prize-label">REWARD</div>
@@ -1840,7 +1856,14 @@ export class HUD {
         : `Eliminated in match ${round + 1}`;
     this.tournamentStartBtn.style.display = stillRunning ? 'inline-flex' : 'none';
     this.tournamentStartBtn.textContent = `Start Match ${t.currentRound + 1}`;
-    this.tournamentExitBtn.textContent = stillRunning ? 'Forfeit' : 'Close';
+    const untouchedRun =
+      t.status === 'active' &&
+      t.currentRound === 0 &&
+      t.record.every((r) => r === 'pending');
+    const exitLabel = this.tournamentExitBtn.querySelector('.modeselect-back-label') as HTMLElement | null;
+    const exitText = untouchedRun ? 'Back' : stillRunning ? 'Forfeit' : 'Close';
+    if (exitLabel) exitLabel.textContent = exitText;
+    else this.tournamentExitBtn.textContent = exitText;
 
     this.tournamentSlots.innerHTML = t.opponents
       .map((opp, i) => {
@@ -2082,7 +2105,7 @@ export class HUD {
     } else if (isTournamentMidWin && t) {
       this.btnNext.textContent = `Next Match (${Math.min(t.currentRound + 1, t.size)}/${t.size})`;
     } else {
-      this.btnNext.textContent = 'Next';
+      this.btnNext.textContent = 'Return to Home';
     }
     this.btnRematch.textContent = isTournamentLoss ? 'Back to Menu' : 'Rematch';
 

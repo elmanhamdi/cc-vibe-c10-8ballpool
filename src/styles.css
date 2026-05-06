@@ -2850,10 +2850,13 @@ body {
   position: absolute;
   inset: 0;
   display: none;
-  align-items: center;
-  justify-content: center;
+  align-items: stretch;
+  justify-content: stretch;
   z-index: 12;
   pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(6, 8, 16, 0.95), rgba(8, 10, 20, 0.92)),
+    radial-gradient(140% 120% at 50% 0%, rgba(255, 197, 90, 0.12), transparent 60%);
 }
 
 .hud-tournament-overlay.show {
@@ -2863,30 +2866,37 @@ body {
 
 .hud-tournament-modal {
   position: relative;
-  width: min(560px, 94vw);
-  max-height: min(680px, 94vh);
-  background:
-    radial-gradient(circle at 80% -10%, rgba(255, 200, 100, 0.22), transparent 55%),
-    linear-gradient(180deg, rgba(20, 18, 36, 0.97), rgba(10, 8, 22, 0.94));
-  border: 1px solid rgba(255, 200, 110, 0.28);
-  border-radius: 20px;
-  padding: 18px 18px 16px;
-  box-shadow:
-    0 26px 80px rgba(0, 0, 0, 0.68),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  width: 100%;
+  height: 100%;
+  max-height: 100%;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: clamp(14px, 3.2cqw, 26px) clamp(10px, 3.4cqw, 32px) clamp(12px, 2.6cqw, 20px);
+  box-shadow: none;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: clamp(10px, 2.2cqw, 16px);
   overflow: hidden;
 }
 
 .hud-tournament-header {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   gap: 10px;
-  padding-bottom: 4px;
+  padding-bottom: 8px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  margin-bottom: 2px;
+}
+
+.hud-tournament-header > div:nth-child(2) {
+  flex: 1;
+  text-align: center;
+}
+
+.hud-tournament-back {
+  align-self: flex-start;
 }
 
 .hud-tournament-title {

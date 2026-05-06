@@ -111,6 +111,18 @@ export interface ProfileHudView {
   ownedCueIds: readonly string[];
   equippedCueId: string;
   equippedCueStats?: { power: number; aim: number; spin: number };
+  /** Lifetime XP earned across matches. */
+  xp: number;
+  /** 1-based account level derived from `xp`. */
+  accountLevel: number;
+  /** XP earned within the current level. */
+  xpInLevel: number;
+  /** XP needed to fill the current level (denominator for the menu bar). */
+  xpToNextLevel: number;
+  /** 0..1 progress to next account level. */
+  accountProgress01: number;
+  /** Highest career step ever beaten (0..7). */
+  highestLevelIndex: number;
 }
 
 /** HUD view model — DOM/XAML adapters bind to this only. */
@@ -180,6 +192,36 @@ export interface HudState {
       stats?: { power: number; aim: number; spin: number };
     }[];
   };
+  /** Active tournament run (mode select → tournament bracket); absent in casual. */
+  tournament?: {
+    active: boolean;
+    /** Match index 0..size-1; equal to `size` after the final match resolves. */
+    currentRound: number;
+    size: number;
+    opponents: readonly { id: string; name: string; tier: string }[];
+    record: readonly ('pending' | 'won' | 'lost')[];
+    status: 'active' | 'won' | 'lost';
+    /** Catalog id of the active definition (`rookie` | `pro` | `elite` | `grandslam`). */
+    defId: string;
+    defName: string;
+    defAccent: string;
+    entryFeeCoins: number;
+    championBonusCoins: number;
+    championBonusXp: number;
+  };
+  /** Snapshot of all tournament defs available in the picker. */
+  tournamentCatalog?: readonly {
+    id: string;
+    name: string;
+    tagline: string;
+    blurb: string;
+    matchCount: number;
+    entryFeeCoins: number;
+    championBonusCoins: number;
+    championBonusXp: number;
+    difficulty: number;
+    accent: string;
+  }[];
   /** Oyuncu beyazı sürükleyerek yerleştirirken cursor/ikon ipucu. */
   cueBallInHandCursorHint?: boolean;
 }

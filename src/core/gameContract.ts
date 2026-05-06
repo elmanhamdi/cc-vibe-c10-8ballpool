@@ -6,6 +6,16 @@ export type GameInputCommand =
   | { type: 'menu.restart' }
   | { type: 'menu.next' }
   | { type: 'menu.home' }
+  /** Big PLAY button on the main menu — kept as alias for `menu.startCasual`. */
+  | { type: 'menu.play' }
+  /** Mode-select Casual card → start career match (same as `menu.play`). */
+  | { type: 'menu.startCasual' }
+  /** Mode-select Tournament card → initialize a new tournament run for a specific catalog id. */
+  | { type: 'menu.startTournament'; tournamentId: string }
+  /** Bracket overlay "Start Match N" button → start the current round's match. */
+  | { type: 'tournament.advance' }
+  /** Champion / Eliminated → discard active tournament and return to menu. */
+  | { type: 'tournament.exit' }
   | { type: 'shop.buyCue'; cueId: string }
   | { type: 'shop.equipCue'; cueId: string }
   | { type: 'spin.set'; nx: number; ny: number }

@@ -190,7 +190,7 @@ export class CollisionSystem {
 
   applyShot(angle: number, power01: number, spinX: number, spinY: number): void {
     /** Global cue strength. */
-    const speed = 630 * (0.18 + 0.82 * power01);
+    const speed = 730 * (0.18 + 0.82 * power01);
     const c = Math.cos(angle);
     const s = Math.sin(angle);
     this.cue.vel.set(c * speed, s * speed);

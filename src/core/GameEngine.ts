@@ -63,7 +63,20 @@ import { transformAt, uniformScale, vec3 } from '../world/Transform.js';
 import type { BallKind } from '../physics/Ball.js';
 import type { PlayerProfile, ProfileView } from './Profile.js';
 import { COIN_REWARD_WIN, computeRank, defaultProfile, hydrateProfile } from './Profile.js';
+import {
+  XP_REWARD_LOSS,
+  XP_REWARD_PER_BALL_POTTED,
+  XP_REWARD_WIN,
+  accountFromXp,
+} from './AccountLevel.js';
 import { SHOP_CUE_CATALOG } from './ShopCatalog.js';
+import { type TournamentRun, createPendingRun } from './Tournament.js';
+import {
+  type TournamentDef,
+  type TournamentTier,
+  findTournament,
+  listTournamentViews,
+} from './TournamentCatalog.js';
 import { Vec2 } from '../physics/Vec2.js';
 
 const PROFILE_STORAGE_KEY = 'vertical-eight-ball.profile.v1';
@@ -135,6 +148,8 @@ export class GameEngine implements Game {
     t: number;
   } | null = null;
   private profile: PlayerProfile = defaultProfile();
+  /** Active tournament run; null while in casual / main menu. Runtime-only (no persistence). */
+  private tournament: TournamentRun | null = null;
 
   /** Center “reaction portrait” moment (TTL); cleared with match / dialogue tick cadence. */
   private opponentReaction: {
@@ -162,7 +177,17 @@ export class GameEngine implements Game {
     this.ai = new AIController(CAREER_OPPONENTS[0]!);
     this.profile = this.loadProfileFromStorage();
     this.ensureEquippedStats();
+    /**
+     * Initialize physics + AI for the first match so the table renders behind the menu,
+     * then drop back to `MainMenu` so the new hub UI is the entry point. Pressing PLAY
+     * (`menu.play`) will re-run `beginCareer` to flip the phase into `PlayerTurn`.
+     */
     this.beginCareer(0);
+    this.phase = 'MainMenu';
+    this.turnClock.stop();
+    /** Replace the match BGM queued by `beginCareer` with the menu (between-games) loop. */
+    this.eventQueue.length = 0;
+    this.pushMusicStart(AssetIds.musicBgBetweenGames);
   }
 
   reset(seed?: number): void {
@@ -279,16 +304,49 @@ export class GameEngine implements Game {
     const playerLost = res.playerLost === true;
     if (!playerWon && !playerLost) return;
     const p = this.profile;
+    /**
+     * Tournament rounds do not pay out per-match coins or XP — the only
+     * payout is the championship bonus when the player clears the bracket.
+     * Casual matches keep their per-match rewards intact.
+     */
+    const isTournamentMatch = this.tournament?.status === 'active';
     if (playerWon) {
-      p.coins += COIN_REWARD_WIN;
+      if (!isTournamentMatch) {
+        p.coins += COIN_REWARD_WIN;
+      }
       p.wins += 1;
       p.currentStreak += 1;
       if (p.currentStreak > p.bestStreak) p.bestStreak = p.currentStreak;
+      /** Tournament wins do not advance the casual ladder; only casual ones do. */
+      if (!isTournamentMatch && this.levelIndex > p.highestLevelIndex) {
+        p.highestLevelIndex = this.levelIndex;
+      }
     } else if (playerLost) {
       p.losses += 1;
       p.currentStreak = 0;
     }
+    if (!isTournamentMatch) {
+      p.xp = Math.max(0, p.xp + this.computeMatchXp(playerWon));
+    }
+    /** Tournament championship bonus is the only tournament payout (final round only). */
+    const bonus = this.applyTournamentResult(playerWon);
+    if (bonus.coinBonus > 0) p.coins += bonus.coinBonus;
+    if (bonus.xpBonus > 0) p.xp = Math.max(0, p.xp + bonus.xpBonus);
     this.saveProfileToStorage();
+  }
+
+  /** XP earned from the just-finished match (called from `applyMatchResult`). */
+  private computeMatchXp(playerWon: boolean): number {
+    const base = playerWon ? XP_REWARD_WIN : XP_REWARD_LOSS;
+    const pot = this.getPotHudState();
+    let pottedByPlayer = 0;
+    if (pot.kind === 'open') {
+      const g = this.rulesCtx.playerGroup;
+      pottedByPlayer = g === 'stripe' ? pot.stripes.length : pot.solids.length;
+    } else {
+      pottedByPlayer = pot.player.length;
+    }
+    return base + Math.max(0, pottedByPlayer) * XP_REWARD_PER_BALL_POTTED;
   }
 
   /** Oyuncu beyaz yerleştirirken canvas `cursor` için (main loop). */
@@ -301,6 +359,11 @@ export class GameEngine implements Game {
   }
 
   getOpponent(): AICharacterProfile {
+    if (this.tournament && this.tournament.status === 'active') {
+      const id = this.tournament.opponents[this.tournament.currentRound];
+      const found = id ? CAREER_OPPONENTS.find((o) => o.id === id) : undefined;
+      if (found) return found;
+    }
     return CAREER_OPPONENTS[Math.min(this.levelIndex, CAREER_OPPONENTS.length - 1)]!;
   }
 
@@ -350,9 +413,78 @@ export class GameEngine implements Game {
     this.pushMusicStart(this.pickRandomMatchBgmId());
   }
 
-  /** After a win, advance the ladder. */
+  /** After a casual career win, advance the ladder. Tournament wins do **not** bump. */
   bumpLevelAfterVictory(): void {
+    if (this.tournament && this.tournament.status === 'active') return;
     this.levelIndex = Math.min(this.levelIndex + 1, CAREER_OPPONENTS.length - 1);
+  }
+
+  /**
+   * Initialize a new tournament run for the given catalog id. Returns true on
+   * success. Fails silently when:
+   *   - the id does not exist in the catalog,
+   *   - the player can't afford the entry fee, or
+   *   - the picker can't produce enough opponents.
+   *
+   * The run starts with no match in progress; the bracket overlay is shown
+   * first and the player presses "Start Match" (`tournament.advance`) to begin
+   * round 0. Career `levelIndex` is preserved.
+   */
+  beginTournament(defId: TournamentTier): boolean {
+    const def = findTournament(defId);
+    if (!def) return false;
+    if (this.profile.coins < def.entryFeeCoins) return false;
+    const opponents = def.pickOpponents(CAREER_OPPONENTS);
+    if (opponents.length < def.matchCount) return false;
+    /** Deduct entry fee up front; refunds are not granted on forfeit/elimination. */
+    if (def.entryFeeCoins > 0) {
+      this.profile.coins -= def.entryFeeCoins;
+      this.saveProfileToStorage();
+    }
+    this.tournament = createPendingRun(defId, opponents.slice(0, def.matchCount));
+    /** Stay in the menu phase so the bracket overlay can introduce the run. */
+    this.phase = 'MainMenu';
+    this.turnClock.stop();
+    return true;
+  }
+
+  /** Begin the next pending round of the active tournament. */
+  private advanceTournament(): void {
+    if (!this.tournament || this.tournament.status !== 'active') return;
+    if (this.tournament.currentRound >= this.tournament.opponents.length) return;
+    /** beginCareer reads `getOpponent()` which now returns the tournament slot. */
+    this.beginCareer(this.levelIndex);
+  }
+
+  private getActiveTournamentDef(): TournamentDef | undefined {
+    if (!this.tournament) return undefined;
+    return findTournament(this.tournament.defId);
+  }
+
+  /**
+   * After a settled match, update tournament bookkeeping. Returns the bonus
+   * XP/coin awarded if the player just won the championship.
+   */
+  private applyTournamentResult(playerWon: boolean): { coinBonus: number; xpBonus: number } {
+    const t = this.tournament;
+    if (!t || t.status !== 'active') return { coinBonus: 0, xpBonus: 0 };
+    const round = t.currentRound;
+    if (!playerWon) {
+      t.record[round] = 'lost';
+      t.status = 'lost';
+      return { coinBonus: 0, xpBonus: 0 };
+    }
+    t.record[round] = 'won';
+    t.currentRound = round + 1;
+    if (t.currentRound >= t.opponents.length) {
+      t.status = 'won';
+      const def = this.getActiveTournamentDef();
+      return {
+        coinBonus: def?.championBonusCoins ?? 0,
+        xpBonus: def?.championBonusXp ?? 0,
+      };
+    }
+    return { coinBonus: 0, xpBonus: 0 };
   }
 
   private requestPlayerShot(angle: number, power01: number, spinX: number, spinY: number): boolean {
@@ -960,26 +1092,69 @@ export class GameEngine implements Game {
       boostPercent: 0,
       visiblePanels: panels,
       prompts,
-      coinRewardWin: COIN_REWARD_WIN,
-      profile: {
-        coins: profile.coins,
-        wins: profile.wins,
-        losses: profile.losses,
-        winRate: profile.winRate,
-        currentStreak: profile.currentStreak,
-        bestStreak: profile.bestStreak,
-        rankName: profile.rank.name,
-        rankIndex: profile.rank.index,
-        nextRankName: profile.rank.nextName,
-        nextRankAtWins: profile.rank.nextAtWins,
-        rankProgress01: profile.rank.progress01,
-        ownedCueIds: profile.ownedCueIds,
-        equippedCueId: profile.equippedCueId,
-        equippedCueStats: this.profile.equippedCueStats,
-      },
+      /**
+       * Tournaments don't pay per-match — only the championship bonus.
+       * Reflect this in the HUD so the end-card reward chip reads `+0`
+       * for mid-tournament wins and the breakdown stays honest.
+       */
+      coinRewardWin: this.tournament != null ? 0 : COIN_REWARD_WIN,
+      profile: (() => {
+        const acct = accountFromXp(profile.xp);
+        return {
+          coins: profile.coins,
+          wins: profile.wins,
+          losses: profile.losses,
+          winRate: profile.winRate,
+          currentStreak: profile.currentStreak,
+          bestStreak: profile.bestStreak,
+          rankName: profile.rank.name,
+          rankIndex: profile.rank.index,
+          nextRankName: profile.rank.nextName,
+          nextRankAtWins: profile.rank.nextAtWins,
+          rankProgress01: profile.rank.progress01,
+          ownedCueIds: profile.ownedCueIds,
+          equippedCueId: profile.equippedCueId,
+          equippedCueStats: this.profile.equippedCueStats,
+          xp: profile.xp,
+          accountLevel: acct.level,
+          xpInLevel: acct.xpInLevel,
+          xpToNextLevel: acct.xpToNextLevel,
+          accountProgress01: acct.progress01,
+          highestLevelIndex: profile.highestLevelIndex,
+        };
+      })(),
       shop: {
         catalog: SHOP_CUE_CATALOG,
       },
+      tournament: this.tournament
+        ? (() => {
+            const t = this.tournament!;
+            const def = findTournament(t.defId);
+            const opponentMeta = t.opponents.map((id) => {
+              const profile = CAREER_OPPONENTS.find((o) => o.id === id);
+              return {
+                id,
+                name: profile?.name ?? id,
+                tier: profile?.tier ?? 'apprentice',
+              };
+            });
+            return {
+              active: t.status === 'active',
+              currentRound: t.currentRound,
+              size: t.opponents.length,
+              opponents: opponentMeta,
+              record: t.record.slice(),
+              status: t.status,
+              defId: t.defId,
+              defName: def?.name ?? t.defId,
+              defAccent: def?.accent ?? t.defId,
+              entryFeeCoins: def?.entryFeeCoins ?? 0,
+              championBonusCoins: def?.championBonusCoins ?? 0,
+              championBonusXp: def?.championBonusXp ?? 0,
+            };
+          })()
+        : undefined,
+      tournamentCatalog: listTournamentViews(),
       nextOpponent:
         nextOpponentProfile != null
           ? {
@@ -1358,12 +1533,34 @@ export class GameEngine implements Game {
   private applyMenuCommands(commands: readonly GameInputCommand[]): void {
     for (const c of commands) {
       if (c.type === 'menu.restart') {
+        /** Tournament mode never offers a Rematch from the end-card, so this is always casual. */
         this.beginCareer(this.levelIndex);
       } else if (c.type === 'menu.next') {
+        if (this.tournament && this.tournament.status === 'active') {
+          /** Tournament wins flow through bracket overlay → `tournament.advance`; ignore here. */
+          continue;
+        }
         this.bumpLevelAfterVictory();
         this.beginCareer(this.levelIndex);
       } else if (c.type === 'menu.home') {
         this.beginCareer(this.levelIndex);
+      } else if (c.type === 'menu.play' || c.type === 'menu.startCasual') {
+        if (this.phase === 'MainMenu') {
+          this.tournament = null;
+          this.beginCareer(this.levelIndex);
+        }
+      } else if (c.type === 'menu.startTournament') {
+        if (this.phase === 'MainMenu') {
+          this.beginTournament(c.tournamentId as TournamentTier);
+        }
+      } else if (c.type === 'tournament.advance') {
+        this.advanceTournament();
+      } else if (c.type === 'tournament.exit') {
+        this.tournament = null;
+        this.phase = 'MainMenu';
+        this.turnClock.stop();
+        this.eventQueue.length = 0;
+        this.pushMusicStart(AssetIds.musicBgBetweenGames);
       } else if (c.type === 'shop.buyCue') {
         this.buyCue(c.cueId);
       } else if (c.type === 'shop.equipCue') {

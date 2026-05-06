@@ -12,6 +12,10 @@ export interface PlayerProfile {
   losses: number;
   currentStreak: number;
   bestStreak: number;
+  /** Lifetime XP earned from matches; drives `AccountLevel`. */
+  xp: number;
+  /** Highest career ladder step ever defeated (0..7); persists for achievements. */
+  highestLevelIndex: number;
   ownedCueIds: string[];
   equippedCueId: string;
   /** Cached cue stats for the equipped cue to avoid lookups on load. */
@@ -53,6 +57,8 @@ export function defaultProfile(): PlayerProfile {
     losses: 0,
     currentStreak: 0,
     bestStreak: 0,
+    xp: 0,
+    highestLevelIndex: 0,
     ownedCueIds: ['classic'],
     equippedCueId: 'classic',
     equippedCueStats: undefined,
@@ -100,6 +106,8 @@ export function hydrateProfile(raw: unknown): PlayerProfile {
     losses: clampNonNegative(num(r.losses)),
     currentStreak: clampNonNegative(num(r.currentStreak)),
     bestStreak: clampNonNegative(num(r.bestStreak)),
+    xp: clampNonNegative(num(r.xp)),
+    highestLevelIndex: clampNonNegative(num(r.highestLevelIndex)),
     ownedCueIds: owned.length > 0 ? owned : base.ownedCueIds,
     equippedCueId: equipped || (owned.length > 0 ? owned[0]! : base.equippedCueId),
     equippedCueStats: undefined,

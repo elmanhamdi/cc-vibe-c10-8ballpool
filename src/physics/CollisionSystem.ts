@@ -8,8 +8,15 @@ const RESTITUTION = 0.985;
 const CUSHION_RESTITUTION = 0.9;
 /** Lower = less drag so balls roll farther / feel less heavy. */
 const FRICTION = 0.6;
-const ENGLISH_DECAY = 0.32;
-const CURL_STRENGTH = 3.8;
+/** Realistic default spin tuning. */
+const MAX_SPIN_TORQUE = 1.0;
+const SPIN_DECAY = 0.7;
+const CURVE_INFLUENCE = 0.15;
+const RAIL_SPIN_INFLUENCE = 0.35;
+const BACKSPIN_PULL_STRENGTH = 0.45;
+const TOPSPIN_FOLLOW_STRENGTH = 0.4;
+const EDGE_HIT_POWER_PENALTY = 0.82;
+const CUE_MAX_SPEED = 1550;
 const STOP_EPS = 0.012;
 const MAX_SUBSTEPS = 6;
 /** Min relative speed along normal (|dot|) to count as audible ball–ball hit (avoids resting jitter). */
@@ -40,6 +47,14 @@ function clampUnit(v: number): number {
   return Math.max(-1, Math.min(1, v));
 }
 
+function clampToUnitDisk(x: number, y: number): { x: number; y: number; len: number } {
+  const sx = clampUnit(x);
+  const sy = clampUnit(y);
+  const len = Math.hypot(sx, sy);
+  if (len <= 1) return { x: sx, y: sy, len };
+  return { x: sx / len, y: sy / len, len: 1 };
+}
+
 
 export class CollisionSystem {
   readonly table: Table;
@@ -47,6 +62,8 @@ export class CollisionSystem {
   readonly cue: Ball;
   private shotActive = false;
   private shotT = 0;
+  /** Short-lived boost to make post-rail sidespin reaction more noticeable than free-flight curve. */
+  private cueRailSpinBoost = 0;
   /** Impulses counted this `stepFrame` (all substeps); reset at start of each frame. */
   private ballBallHitsThisFrame = 0;
   private readonly shotOutcome: ShotOutcome = {
@@ -77,6 +94,7 @@ export class CollisionSystem {
       a.english.set(0, 0);
       a.active = true;
     }
+    this.cueRailSpinBoost = 0;
   }
 
   placeCueBallForBreak(): void {
@@ -85,6 +103,7 @@ export class CollisionSystem {
     this.cue.pos.set(t.width * 0.5, t.height * 0.86);
     this.cue.vel.set(0, 0);
     this.cue.english.set(0, 0);
+    this.cueRailSpinBoost = 0;
   }
 
   placeCueBallInKitchen(): void {
@@ -93,6 +112,7 @@ export class CollisionSystem {
     this.cue.pos.set(t.width * 0.5, t.headStringY + 40);
     this.cue.vel.set(0, 0);
     this.cue.english.set(0, 0);
+    this.cueRailSpinBoost = 0;
   }
 
   /** Ball-in-hand: playable alan + diğer aktif toplardan ayır. */
@@ -102,6 +122,7 @@ export class CollisionSystem {
     this.clampCueBallInHandInto(tableX, tableY, cue.pos);
     cue.vel.set(0, 0);
     cue.english.set(0, 0);
+    this.cueRailSpinBoost = 0;
   }
 
   /**
@@ -180,6 +201,7 @@ export class CollisionSystem {
       cue.active = true;
       cue.vel.set(0, 0);
       cue.english.set(0, 0);
+      this.cueRailSpinBoost = 0;
       return;
     }
     this.placeCueBallInKitchen();
@@ -233,14 +255,18 @@ export class CollisionSystem {
   }
 
   applyShot(angle: number, power01: number, spinX: number, spinY: number): void {
+    const spin = clampToUnitDisk(spinX, spinY);
+    const spinStrength = Math.max(0, Math.min(1, spin.len));
+    const effectivePower01 =
+      Math.max(0, Math.min(1, power01)) *
+      (1 + (EDGE_HIT_POWER_PENALTY - 1) * spinStrength);
     /** Global cue strength. */
-    const speed = 730 * (0.18 + 0.82 * power01);
+    const speed = 730 * (0.18 + 0.82 * effectivePower01);
     const c = Math.cos(angle);
     const s = Math.sin(angle);
     this.cue.vel.set(c * speed, s * speed);
-    const sx = clampUnit(spinX);
-    const sy = clampUnit(spinY);
-    this.cue.english.set(sx, sy);
+    this.cue.english.set(spin.x * MAX_SPIN_TORQUE, spin.y * MAX_SPIN_TORQUE);
+    this.cueRailSpinBoost = 0;
   }
 
   /** Call after `applyShot` to start incremental simulation. */
@@ -255,12 +281,14 @@ export class CollisionSystem {
     this.shotOutcome.railAfterFirstContact = false;
     this.breakCushionBallIds.clear();
     this.shotOutcome.breakCushionBallCount = 0;
+    this.cueRailSpinBoost = 0;
   }
 
   /** One render-frame step. Returns true when simulation finished. */
   stepFrame(dt: number): boolean {
     if (!this.shotActive) return true;
     this.shotT += dt;
+    this.cueRailSpinBoost = Math.max(0, this.cueRailSpinBoost - dt * 2.6);
     if (this.shotT > 26) {
       this.forceStopAll();
       this.shotActive = false;
@@ -328,6 +356,7 @@ export class CollisionSystem {
     }
     if (this.cue.active && this.cue.vel.lenSq() < STOP_EPS * STOP_EPS) {
       this.cue.english.set(0, 0);
+      this.cueRailSpinBoost = 0;
     }
   }
 
@@ -336,6 +365,7 @@ export class CollisionSystem {
       b.vel.set(0, 0);
     }
     this.cue.english.set(0, 0);
+    this.cueRailSpinBoost = 0;
   }
 
   private allStopped(): boolean {
@@ -346,20 +376,38 @@ export class CollisionSystem {
     return true;
   }
 
+  /** Continuous cue-spin integration: moderate cloth curve, draw/follow coupling, exponential decay. */
   private integrateEnglish(b: Ball, h: number, outcome: ShotOutcome): void {
     if (b.kind !== 'cue' || !b.active) return;
-    const sp = Math.min(b.speed(), 1100);
+    const sp = Math.min(b.speed(), CUE_MAX_SPEED);
     if (sp < 1e-3) return;
     if (sp > STOP_EPS) outcome.anyBallMoved = true;
-    const dir = tmpA.copy(b.vel).normalize();
-    const perp = tmpB.set(-dir.y, dir.x);
-    const curl = CURL_STRENGTH * b.english.x;
-    b.vel.add(perp.scale(curl * sp * h));
-    const roll = b.english.y;
-    const forward = tmpA.copy(dir).scale(roll * 2.8 * FRICTION * h);
-    b.vel.add(forward);
-    const decay = Math.exp(-ENGLISH_DECAY * h * (0.1 + sp * 0.00045));
+
+    const decay = Math.exp(-SPIN_DECAY * h * (0.75 + sp * 0.00105));
     b.english.scale(decay);
+    const dir = tmpA.copy(b.vel);
+    if (dir.lenSq() < 1e-10) return;
+    dir.normalize();
+    const perp = tmpB.set(-dir.y, dir.x);
+    const sideSpin = b.english.x;
+    const verticalSpin = b.english.y;
+    const curveBoost = 1 + this.cueRailSpinBoost * 0.85;
+    const curveStrength = CURVE_INFLUENCE * curveBoost;
+    b.vel.add(perp.scale(sideSpin * sp * curveStrength * h));
+
+    const topspin = Math.max(0, verticalSpin);
+    const backspin = Math.max(0, -verticalSpin);
+    if (topspin > 1e-4) {
+      b.vel.add(tmpA.copy(dir).scale(topspin * TOPSPIN_FOLLOW_STRENGTH * FRICTION * h));
+    }
+    if (backspin > 1e-4) {
+      const postContactBoost = outcome.firstHitId !== null ? 1.45 : 0.95;
+      b.vel.add(
+        tmpA
+          .copy(dir)
+          .scale(-backspin * BACKSPIN_PULL_STRENGTH * postContactBoost * FRICTION * h),
+      );
+    }
   }
 
   private resolveBallBall(outcome: ShotOutcome, h: number): void {
@@ -402,11 +450,28 @@ export class CollisionSystem {
           if (outcome.firstHitId === null && other.kind !== 'cue') {
             outcome.firstHitId = other.id;
           }
-          const tangent = tmpA.set(-tmpN.y, tmpN.x);
-          const englishBoost = 160 * h * 60;
-          if (cue.kind === 'cue') {
-            cue.vel.add(tangent.scale(cue.english.x * englishBoost * 0.12));
-            cue.vel.add(tmpN.clone().scale(cue.english.y * englishBoost * 0.2));
+          if (cue.kind === 'cue' && other.kind !== 'cue') {
+            const ex = cue.english.x;
+            const ey = cue.english.y;
+            if (Math.abs(ex) > 1e-5 || Math.abs(ey) > 1e-5) {
+              const relN = Math.min(1, Math.abs(velAlongN) / 520);
+              const tang = tmpA.set(-tmpN.y, tmpN.x);
+              const topspin = Math.max(0, ey);
+              const backspin = Math.max(0, -ey);
+              const sideSpin = ex;
+              const followObj = topspin * TOPSPIN_FOLLOW_STRENGTH * 0.14 * relN;
+              const cueFollow = topspin * TOPSPIN_FOLLOW_STRENGTH * 0.06 * relN;
+              const cueDraw = backspin * BACKSPIN_PULL_STRENGTH * 0.22 * relN;
+              other.vel.add(tmpN.clone().scale(followObj));
+              cue.vel.add(tmpN.clone().scale(cueFollow - cueDraw));
+              const sideObj = sideSpin * 0.095 * relN;
+              const sideCue = sideSpin * 0.12 * relN;
+              other.vel.add(tang.clone().scale(sideObj));
+              cue.vel.add(tang.clone().scale(-sideCue));
+              cue.english.scale(0.82);
+              const cueSp = cue.speed();
+              if (cueSp > CUE_MAX_SPEED) cue.vel.scale(CUE_MAX_SPEED / cueSp);
+            }
           }
         }
       }
@@ -446,9 +511,19 @@ export class CollisionSystem {
     const vn = Vec2.dot(b.vel, tmpN);
     if (vn < 0) {
       const tang = tmpA.set(-tmpN.y, tmpN.x);
-      const englishKick = b.kind === 'cue' ? b.english.x * 1.5 : 0;
-      b.vel.sub(tmpN.clone().scale((1 + CUSHION_RESTITUTION) * vn));
-      b.vel.add(tang.scale(englishKick));
+      const sideSpin = b.kind === 'cue' ? b.english.x : 0;
+      const verticalSpin = b.kind === 'cue' ? b.english.y : 0;
+      const speedFactor = 0.45 + 0.55 * Math.min(1, b.speed() / 900);
+      const railKick = sideSpin * RAIL_SPIN_INFLUENCE * speedFactor;
+      const reboundBias = 1 + Math.max(0, verticalSpin) * 0.07 - Math.max(0, -verticalSpin) * 0.09;
+      const reflected = (1 + CUSHION_RESTITUTION * reboundBias) * vn;
+      b.vel.sub(tmpN.clone().scale(reflected));
+      b.vel.add(tang.scale(railKick * Math.max(120, b.speed()) * 0.17));
+      if (b.kind === 'cue') {
+        b.english.x *= 0.74;
+        b.english.y *= 0.84;
+        this.cueRailSpinBoost = 1;
+      }
       if (b.kind !== 'cue') this.breakCushionBallIds.add(b.id);
       if (outcome.firstHitId !== null) outcome.railAfterFirstContact = true;
     }

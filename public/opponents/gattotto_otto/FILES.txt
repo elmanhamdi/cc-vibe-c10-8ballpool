@@ -1,0 +1,24 @@
+Gattotto Otto � served from /opponents/gattotto_otto/
+
+Career: stronger than Tungo Biliardo, weaker than Torta Tartaruga.
+
+hud/
+  avatar.png
+
+reactions/
+  Ball.jpg
+  Cry.jpg
+  LastBall.jpg
+  Laught.jpg
+  Scary.jpg
+  Smile.jpg
+  Time.jpg
+  (time2 trigger reuses Time.jpg unless you add Time2.jpg)
+
+model/
+  Idle.fbx
+
+model/temp.fbm/   (if FBX references Meshy disk paths � same as Torta)
+  Image_0.jpg
+  Image_2.jpg
+  Image_3.jpg

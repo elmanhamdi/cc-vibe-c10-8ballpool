@@ -27,46 +27,48 @@ const ASSET_BY_KIND: Record<TungoReactionKind, string> = {
 
 export const TUNGO_LINES = {
   ball: [
-    'AIR SHOT!',
-    'HIT SOMETHING!',
-    'TOTAL WHIFF.',
+    'YOU MISS THE WHOLE TABLE?',
+    'HIT A BALL, ANY BALL.',
+    'THAT WAS A CLEAN WHIFF.',
   ],
   cry: [
-    'NOT CRYING!',
-    'MY LEGEND…',
-    'TAKE THE WIN.',
+    'WHATEVER. YOU GOT LUCKY.',
+    'I WILL REMEMBER THIS.',
+    'ENJOY IT WHILE IT LASTS.',
   ],
   lastBall: [
-    'EIGHT ON THE LINE.',
-    'NO EXCUSES.',
-    'BIG SHOT.',
+    'EIGHT BALL. NO HIDING.',
+    'PUT UP OR PACK UP.',
+    'THIS SHOT DECIDES IT.',
   ],
   laught: [
-    'NICE ANGLE.',
-    'HA! MISSED.',
-    'WAY OFF.',
+    'HA. THAT ANGLE WAS TRASH.',
+    'YOU MISSED BIG.',
+    'I SAW THAT COMING.',
   ],
   scary: [
-    'YOU A PRO?',
-    'STOP IT!',
-    'TOO GOOD…',
+    'OKAY... THAT WAS TOUGH.',
+    'YOU ARE HEATING UP.',
+    'HMM. MAYBE YOU CAN PLAY.',
   ],
   smile: [
-    'NICE TRY.',
-    'KEEP TRYING.',
-    'THANKS!',
+    'FINE. NICE SHOT.',
+    'GOOD POT. STAY SHARP.',
+    'NOT BAD... KEEP IT UP.',
   ],
   time: [
-    'TICK-TOCK.',
-    'TIME’S UP!',
-    'TOO SLOW.',
+    'TICK-TOCK, CHAMP.',
+    'TIME’S DONE.',
+    'YOU PLAY IN SLOW MOTION?',
   ],
   time2: [
-    'STILL AIMING?',
-    'CLOCK’S DEAD.',
-    'HURRY UP!',
+    'STILL THINKING?',
+    'CLOCK JUST DIED.',
+    'MOVE IT.',
   ],
 } as const;
+
+export type PortraitLineKey = keyof typeof TUNGO_LINES;
 
 export function tungoReactionAssetId(kind: TungoReactionKind): string {
   return ASSET_BY_KIND[kind];

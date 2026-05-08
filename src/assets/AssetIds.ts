@@ -35,6 +35,10 @@ export const AssetIds = {
   soundReaction3: 'sound.ui.reaction3',
   /** HUD button click (`public/audio/Click.wav`). */
   soundUiClick: 'sound.ui.click',
-  /** Geçici silüet; sonra FBX ile değiştirilecek. */
+  /** Tungo — idle FBX behind table rail. */
   opponentTungPlaceholder: 'char.tungPlaceholder',
+  /** Torta Tartaruga — idle FBX behind table rail. */
+  opponentTortaPlaceholder: 'char.tortaPlaceholder',
+  /** Gattotto Otto — idle FBX behind table rail. */
+  opponentGattottoPlaceholder: 'char.gattottoPlaceholder',
 } as const;

@@ -1,4 +1,4 @@
-import { DIALOGUE_BANK, type DialogueCategory, type WeightedLine } from './dialogueLines.js';
+import { dialogueLinesFor, type DialogueCategory, type WeightedLine } from './dialogueLines.js';
 
 interface Cooldowns {
   global: number;
@@ -32,7 +32,10 @@ export class DialogueManager {
     }
   }
 
-  trySpeak(category: DialogueCategory, opts?: { personalitySilentChance?: number }): string | null {
+  trySpeak(
+    category: DialogueCategory,
+    opts?: { personalitySilentChance?: number; opponentId?: string },
+  ): string | null {
     const silentChance = opts?.personalitySilentChance ?? 0;
     if (category !== 'silent_beat' && Math.random() < silentChance) return null;
 
@@ -40,7 +43,7 @@ export class DialogueManager {
     const catCd = this.cd.byCategory[category] ?? 0;
     if (catCd > 0) return null;
 
-    const lines = DIALOGUE_BANK[category];
+    const lines = dialogueLinesFor(category, opts?.opponentId);
     const line = pickWeighted(lines);
     if (!line) return null;
 

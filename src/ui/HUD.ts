@@ -4,6 +4,7 @@ import type { GamePhase } from '../core/types.js';
 import { AssetManifest } from '../assets/AssetManifest.js';
 import { AssetIds } from '../assets/AssetIds.js';
 import { resolveBrowserAssetUrl } from '../assets/resolveBrowserAssetUrl.js';
+import { XP_REWARD_WIN } from '../core/AccountLevel.js';
 import { SHOP_CUE_CATALOG } from '../core/ShopCatalog.js';
 import { evaluateAchievements } from './AchievementsCatalog.js';
 import { getLeaderboard } from './LeaderboardData.js';
@@ -12,12 +13,18 @@ const SOUND_ICON_ON_URL = new URL('./sound.png', import.meta.url).href;
 const SOUND_ICON_OFF_URL = new URL('./sound_off.png', import.meta.url).href;
 const SOLID_BALL_ICON_URL = new URL('./SolidBall.png', import.meta.url).href;
 const STRIPE_BALL_ICON_URL = new URL('./StripeBall.png', import.meta.url).href;
-const SHOP_ICON_URL = new URL('./shop.png', import.meta.url).href;
-const PLAY_AGAIN_ICON_URL = new URL('./play-again.png', import.meta.url).href;
 
 function opponentHudAvatarUrl(assetBaseUrl: string, opponentId: string): string {
   if (opponentId === 'tungo') {
     const e = AssetManifest['ui.opponent.tungo.avatar'];
+    return resolveBrowserAssetUrl(assetBaseUrl, e.browserUrl);
+  }
+  if (opponentId === 'torta_tartaruga') {
+    const e = AssetManifest['ui.opponent.torta_tartaruga.avatar'];
+    return resolveBrowserAssetUrl(assetBaseUrl, e.browserUrl);
+  }
+  if (opponentId === 'gattotto_otto') {
+    const e = AssetManifest['ui.opponent.gattotto_otto.avatar'];
     return resolveBrowserAssetUrl(assetBaseUrl, e.browserUrl);
   }
   if (opponentId === 'balleeina') {
@@ -40,6 +47,11 @@ export class HUD {
   private readonly end: HTMLElement;
   private readonly endReward: HTMLElement;
   private readonly endBalance: HTMLElement;
+  /** End-screen headline assets replace plain YOU WON / YOU LOST text. */
+  private readonly endTitleWrap: HTMLElement;
+  private readonly endTitleImg: HTMLImageElement;
+  private readonly urlEndYouWon: string;
+  private readonly urlEndYouLose: string;
   private readonly btnNext: HTMLButtonElement;
   private readonly btnRematch: HTMLButtonElement;
   private readonly btnShop: HTMLButtonElement;
@@ -71,7 +83,6 @@ export class HUD {
   private readonly levelCurrentRank: HTMLElement;
   private readonly levelNextRank: HTMLElement;
   private readonly levelWinsNeeded: HTMLElement;
-  private readonly levelReward: HTMLElement;
   /** Optional career-rank badge inside the menu; null if the footer is hidden. */
   private readonly menuLevel: HTMLElement | null;
   private readonly endLevel: HTMLElement;
@@ -121,6 +132,7 @@ export class HUD {
   /** Center yellow popup (group assignment / foul). */
   private readonly hudNotice: HTMLElement;
   private readonly hudNoticeText: HTMLElement;
+  private readonly ballInHandHintLabel: HTMLElement;
   private hudNoticeTimer: ReturnType<typeof setTimeout> | null = null;
   private lastHudNoticeBeatId = -1;
   /** `${defId}:${currentRound}` of the most recently introduced match — prevents re-triggering. */
@@ -135,7 +147,6 @@ export class HUD {
   private readonly menuShopBtn: HTMLButtonElement;
   private readonly menuAchievementsBtn: HTMLButtonElement;
   private readonly menuAccountChip: HTMLElement;
-  private readonly rewardWin: HTMLElement;
   private lastProfile: HudState['profile'] | null = null;
   private lastEightBall: HudState['eightBall'] | null = null;
   private statsVisibleFor: 'player' | 'opponent' | null = null;
@@ -147,9 +158,26 @@ export class HUD {
   private readonly gameRoot: HTMLElement | null;
   private readonly hudLayoutObserver: ResizeObserver;
   private readonly powerBarWrap: HTMLElement;
+  /** Floating cursor hint next to the power bar during first-run tutorial. */
+  private readonly tutorialPowerDrag: HTMLElement;
   private readonly powerBarTrack: HTMLElement;
   /** True while user has primary pointer down on the power track (avoid HUD sync overwriting `--p`). */
   private powerBarPointerDown = false;
+  /** Active pointer id while dragging inside the spin popup pad; null when idle. */
+  private spinPopupDragId: number | null = null;
+  private spinPopupVisible = false;
+  private readonly spinOpenBtn: HTMLButtonElement;
+  private readonly spinPopupOverlay: HTMLElement;
+  private readonly spinPopupBackdrop: HTMLElement;
+  private readonly spinPopupPanel: HTMLElement;
+  private readonly spinPopupPad: HTMLElement;
+  private readonly spinPopupBall: HTMLElement;
+  private readonly spinPopupDot: HTMLElement;
+  private readonly spinPopupReadout: HTMLElement;
+  private readonly spinPopupClose: HTMLButtonElement;
+  private readonly spinPopupReset: HTMLButtonElement;
+  private lastSpinPadTapMs = 0;
+  private lastSpinPadTapLen = 10;
 
   constructor(
     root: HTMLElement,
@@ -215,7 +243,7 @@ export class HUD {
         <div class="hud-tournament-strip" id="hud-tournament-strip" data-accent="pro" data-active="false" aria-hidden="true">
           <span class="hud-tournament-strip-name" id="hud-tournament-strip-name">—</span>
           <ol class="hud-tournament-strip-dots" id="hud-tournament-strip-dots"></ol>
-          <span class="hud-tournament-strip-counter" id="hud-tournament-strip-counter">1 / 4</span>
+          <span class="hud-tournament-strip-counter" id="hud-tournament-strip-counter">1 / 3</span>
         </div>
         <div class="hud-top-main">
           <div class="hud-side hud-side-ai">
@@ -237,10 +265,18 @@ export class HUD {
             </div>
           </div>
           <div class="hud-center-col">
-            <div class="spin interactive spin-top spin-center" id="spin-pad" aria-label="Spin picker">
-              <div class="cue-mini cue-spin-main"><div id="spin-dot" class="spin-dot"></div></div>
+            <div class="spin spin-top spin-center spin-top-wrap" id="spin-top-wrap">
+              <button
+                type="button"
+                class="spin-open-btn interactive"
+                id="spin-open-btn"
+                aria-label="Hit position and spin"
+                aria-haspopup="dialog"
+                aria-expanded="false"
+              >
+                <span class="cue-mini cue-spin-main" aria-hidden="true"><span id="spin-dot" class="spin-dot"></span></span>
+              </button>
             </div>
-            <div class="hud-reward" id="hud-reward-win" aria-live="polite"></div>
           </div>
           <div class="hud-side hud-side-player">
             <div class="hud-ident-block hud-ident-block--end">
@@ -296,6 +332,11 @@ export class HUD {
 
     this.end = el('div', 'panel end interactive');
     this.end.innerHTML = `
+      <div class="end-result-hero" aria-hidden="false">
+        <div id="end-title-wrap" class="end-title-wrap">
+          <img id="end-title-img" class="end-title-img" src="" alt="" decoding="async" draggable="false" />
+        </div>
+      </div>
       <div class="end-card">
         <div id="end-opp-react" class="end-opp-react" aria-hidden="true">
           <p id="end-opp-quote" class="end-opp-quote"></p>
@@ -305,7 +346,6 @@ export class HUD {
           <div class="end-champion-name" id="end-champion-name">Tournament</div>
         </div>
         <div class="end-head">
-          <div id="end-title" class="title">MATCH OVER</div>
           <div id="end-sub" class="sub">—</div>
           <div class="end-level-row">
             <span class="end-level-label">Your level</span>
@@ -335,13 +375,16 @@ export class HUD {
         </div>
         <div class="end-actions">
           <button id="btn-shop" class="btn ghost btn-icon-only" aria-label="Open shop" title="Shop">
-            <img class="btn-icon" src="${SHOP_ICON_URL}" alt="" decoding="async" draggable="false" />
+            <img class="btn-icon" src="${resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/button_shop.png')}" alt="" decoding="async" draggable="false" />
           </button>
           <div class="end-actions-main">
-            <button id="btn-rematch" class="btn ghost btn-icon-only" aria-label="Rematch" title="Rematch">
-              <img class="btn-icon" src="${PLAY_AGAIN_ICON_URL}" alt="" decoding="async" draggable="false" />
+            <button id="btn-rematch" class="btn ghost btn-icon-only" aria-label="Back to main menu" title="Back to Main Menu">
+              <img class="btn-icon" src="${resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/button_mainmenu.png')}" alt="" decoding="async" draggable="false" />
             </button>
-            <button id="btn-next" class="btn btn-next primary">Next Match</button>
+            <button id="btn-next" class="btn btn-next primary" aria-label="Next match" title="Next Match">
+              <img class="btn-next-home-icon" src="${resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/button_mainmenu.png')}" alt="" decoding="async" draggable="false" />
+              <span class="btn-next-label">Next Match</span>
+            </button>
           </div>
         </div>
       </div>
@@ -349,6 +392,10 @@ export class HUD {
     `;
     this.endReward = this.end.querySelector('#end-reward') as HTMLElement;
     this.endBalance = this.end.querySelector('#end-balance') as HTMLElement;
+    this.endTitleWrap = this.end.querySelector('#end-title-wrap') as HTMLElement;
+    this.endTitleImg = this.end.querySelector('#end-title-img') as HTMLImageElement;
+    this.urlEndYouWon = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/youwon.png');
+    this.urlEndYouLose = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/youlose.png');
     this.btnNext = this.end.querySelector('#btn-next') as HTMLButtonElement;
     this.btnRematch = this.end.querySelector('#btn-rematch') as HTMLButtonElement;
     this.btnShop = this.end.querySelector('#btn-shop') as HTMLButtonElement;
@@ -397,10 +444,6 @@ export class HUD {
           <div class="hud-level-label">Wins needed</div>
           <div class="hud-level-value" id="hud-level-wins-needed">—</div>
         </div>
-        <div class="hud-level-row">
-          <div class="hud-level-label">Win reward</div>
-          <div class="hud-level-value" id="hud-level-reward">—</div>
-        </div>
       </div>
     `;
     this.levelTitle = this.levelOverlay.querySelector('#hud-level-title') as HTMLElement;
@@ -409,7 +452,6 @@ export class HUD {
     this.levelCurrentRank = this.levelOverlay.querySelector('#hud-level-current') as HTMLElement;
     this.levelNextRank = this.levelOverlay.querySelector('#hud-level-next') as HTMLElement;
     this.levelWinsNeeded = this.levelOverlay.querySelector('#hud-level-wins-needed') as HTMLElement;
-    this.levelReward = this.levelOverlay.querySelector('#hud-level-reward') as HTMLElement;
     this.menuLevel = this.menu.querySelector('#menu-lvl') as HTMLElement | null;
     this.endLevel = this.end.querySelector('#end-lvl') as HTMLElement;
 
@@ -496,7 +538,7 @@ export class HUD {
           </button>
           <div>
             <div class="hud-tournament-title" id="hud-tournament-title">Tournament Bracket</div>
-            <div class="hud-tournament-sub" id="hud-tournament-sub">Match 1 of 4</div>
+            <div class="hud-tournament-sub" id="hud-tournament-sub">Match 1 of 3</div>
           </div>
           <div class="modeselect-spacer" aria-hidden="true"></div>
         </div>
@@ -535,14 +577,13 @@ export class HUD {
     this.soundBtn = document.createElement('button');
     this.soundBtn.className = 'hud-sound-btn interactive';
     this.soundBtn.type = 'button';
-    this.soundBtn.setAttribute('aria-label', 'Toggle sound');
+    this.soundBtn.setAttribute('aria-label', 'Toggle music');
     this.soundBtnIcon = document.createElement('img');
     this.soundBtnIcon.className = 'hud-sound-btn-icon';
     this.soundBtnIcon.alt = '';
     this.soundBtnIcon.decoding = 'async';
     this.soundBtn.append(this.soundBtnIcon);
 
-    this.rewardWin = this.topStack.querySelector('#hud-reward-win') as HTMLElement;
     this.tournamentStrip = this.topStack.querySelector('#hud-tournament-strip') as HTMLElement;
     this.tournamentStripName = this.topStack.querySelector('#hud-tournament-strip-name') as HTMLElement;
     this.tournamentStripDots = this.topStack.querySelector('#hud-tournament-strip-dots') as HTMLElement;
@@ -553,16 +594,43 @@ export class HUD {
     this.matchIntro.innerHTML = `
       <div class="hud-match-intro-card">
         <div class="hud-match-intro-sub" id="hud-match-intro-sub">Tournament</div>
-        <div class="hud-match-intro-title" id="hud-match-intro-title">Match 1 / 4</div>
+        <div class="hud-match-intro-title" id="hud-match-intro-title">Match 1 / 3</div>
       </div>
     `;
     this.matchIntroTitle = this.matchIntro.querySelector('#hud-match-intro-title') as HTMLElement;
     this.matchIntroSub = this.matchIntro.querySelector('#hud-match-intro-sub') as HTMLElement;
 
+    this.spinOpenBtn = this.topStack.querySelector('#spin-open-btn') as HTMLButtonElement;
+    this.spinPopupOverlay = el('div', 'hud-spin-popup');
+    this.spinPopupOverlay.setAttribute('aria-hidden', 'true');
+    this.spinPopupOverlay.innerHTML = `
+      <div class="hud-spin-popup-backdrop" id="spin-popup-backdrop"></div>
+      <div class="hud-spin-popup-panel" role="dialog" aria-modal="true" aria-labelledby="spin-popup-title">
+        <button type="button" class="hud-spin-popup-close interactive" id="spin-popup-close" aria-label="Close hit position popup">×</button>
+        <div id="spin-popup-title" class="hud-spin-popup-title">Hit position</div>
+        <div id="spin-popup-readout" class="hud-spin-popup-readout">X +0.00 | Y +0.00</div>
+        <div class="spin spin-popup-inner interactive" id="spin-popup-pad" aria-label="Choose hit position on cue ball">
+          <div class="cue-spin-popup-ball" id="spin-popup-ball"><div id="spin-popup-dot" class="spin-dot spin-dot--popup"></div></div>
+        </div>
+        <button type="button" class="hud-spin-popup-reset interactive" id="spin-popup-reset">Reset</button>
+      </div>
+    `;
+    this.spinPopupBackdrop = this.spinPopupOverlay.querySelector('#spin-popup-backdrop') as HTMLElement;
+    this.spinPopupPanel = this.spinPopupOverlay.querySelector('.hud-spin-popup-panel') as HTMLElement;
+    this.spinPopupPad = this.spinPopupOverlay.querySelector('#spin-popup-pad') as HTMLElement;
+    this.spinPopupBall = this.spinPopupOverlay.querySelector('#spin-popup-ball') as HTMLElement;
+    this.spinPopupDot = this.spinPopupOverlay.querySelector('#spin-popup-dot') as HTMLElement;
+    this.spinPopupReadout = this.spinPopupOverlay.querySelector('#spin-popup-readout') as HTMLElement;
+    this.spinPopupClose = this.spinPopupOverlay.querySelector('#spin-popup-close') as HTMLButtonElement;
+    this.spinPopupReset = this.spinPopupOverlay.querySelector('#spin-popup-reset') as HTMLButtonElement;
+
     this.hudNotice = el('div', 'hud-notice');
     this.hudNotice.setAttribute('aria-hidden', 'true');
     this.hudNotice.innerHTML = `<div class="hud-notice-text" id="hud-notice-text"></div>`;
     this.hudNoticeText = this.hudNotice.querySelector('#hud-notice-text') as HTMLElement;
+    this.ballInHandHintLabel = el('div', 'hud-ballinhand-hint');
+    this.ballInHandHintLabel.textContent = 'Drag to Place';
+    this.ballInHandHintLabel.setAttribute('aria-hidden', 'true');
 
     this.powerBarWrap = el('div', 'hud-power-bar interactive');
     this.powerBarWrap.setAttribute('aria-label', 'Shot power — drag cue down, release to shoot');
@@ -590,6 +658,24 @@ export class HUD {
     this.powerBarTrack.style.setProperty('--hud-power-muted-img', `url("${mutedTrack}")`);
     this.powerBarTrack.style.setProperty('--hud-power-spectrum-img', `url("${spectrumTrack}")`);
     this.powerBarWrap.style.display = 'none';
+
+    const powerInner = this.powerBarWrap.querySelector('.hud-power-bar-inner') as HTMLElement;
+    this.tutorialPowerDrag = el('div', 'hud-tutorial-power-drag');
+    this.tutorialPowerDrag.setAttribute('aria-hidden', 'true');
+    const tutImg = document.createElement('img');
+    tutImg.className = 'hud-tutorial-power-drag-img';
+    tutImg.alt = '';
+    tutImg.decoding = 'async';
+    tutImg.src = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/tutorial_power_cursor.png');
+    tutImg.addEventListener(
+      'error',
+      () => {
+        tutImg.src = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/button_play.png');
+      },
+      { once: true },
+    );
+    this.tutorialPowerDrag.append(tutImg);
+    powerInner.append(this.tutorialPowerDrag);
 
     /** Menu background — Tungo lounge art under the hub. */
     const menuBgUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/bg.png');
@@ -625,7 +711,9 @@ export class HUD {
       this.modeSelectOverlay,
       this.tournamentOverlay,
       this.matchIntro,
+      this.spinPopupOverlay,
       this.hudNotice,
+      this.ballInHandHintLabel,
       this.nextModal,
       this.soundBtn,
       this.powerBarWrap,
@@ -638,7 +726,6 @@ export class HUD {
   }
 
   private playHudClickSound(): void {
-    if (this.soundMuted) return;
     this.opts?.playUiClick?.();
   }
 
@@ -661,26 +748,100 @@ export class HUD {
     });
     this.btnRematch.addEventListener('click', () => {
       this.playHudClickSound();
-      const t = this.getHud().tournament;
-      if (t?.status === 'lost') {
-        /** Eliminated branch — Rematch button is repurposed to "Back to Menu". */
-        this.pushCommand({ type: 'tournament.exit' });
-        return;
-      }
-      this.pushCommand({ type: 'menu.restart' });
+      /** Match-end secondary action is now always "Back to Main Menu". */
+      this.pushCommand({ type: 'tournament.exit' });
     });
     this.btnShop.addEventListener('click', () => {
       this.playHudClickSound();
       this.showShopOverlay();
     });
 
-    const spin = this.topStack.querySelector('#spin-pad') as HTMLElement;
-    spin.addEventListener('pointerdown', (e: Event) => {
-      const pe = e as PointerEvent;
-      const r = spin.getBoundingClientRect();
-      const nx = ((pe.clientX - r.left) / r.width) * 2 - 1;
-      const ny = ((pe.clientY - r.top) / r.height) * 2 - 1;
-      this.pushCommand({ type: 'spin.set', nx: clamp(nx), ny: clamp(ny) });
+    /**
+     * Map pointer to a point inside the unit disk (continuous hit position).
+     * Clicks outside the circle are projected onto the rim — matches aiming on a round cue ball.
+     */
+    const pushSpinFromPadElement = (padEl: HTMLElement, pe: PointerEvent): { nx: number; ny: number; len: number } => {
+      const r = padEl.getBoundingClientRect();
+      const cx = r.left + r.width * 0.5;
+      const cy = r.top + r.height * 0.5;
+      const radiusPx = Math.max(12, Math.min(r.width, r.height) * 0.46);
+      let nx = (pe.clientX - cx) / radiusPx;
+      let ny = (pe.clientY - cy) / radiusPx;
+      const len = Math.hypot(nx, ny);
+      if (len > 1) {
+        nx /= len;
+        ny /= len;
+      }
+      this.pushCommand({ type: 'spin.set', nx, ny });
+      return { nx, ny, len: Math.min(1, len) };
+    };
+
+    this.spinOpenBtn.addEventListener('click', (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (this.spinOpenBtn.disabled) return;
+      this.playHudClickSound();
+      this.showSpinPopup();
+    });
+
+    this.spinPopupBackdrop.addEventListener('pointerdown', (e: PointerEvent) => {
+      e.preventDefault();
+      this.playHudClickSound();
+      this.hideSpinPopup();
+    });
+    this.spinPopupPanel.addEventListener('pointerdown', (e: PointerEvent) => {
+      e.stopPropagation();
+    });
+
+    this.spinPopupPad.addEventListener('pointerdown', (e: PointerEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const now = performance.now();
+      const tap = pushSpinFromPadElement(this.spinPopupPad, e);
+      if (
+        tap.len <= 0.2 &&
+        this.lastSpinPadTapLen <= 0.2 &&
+        now - this.lastSpinPadTapMs <= 280
+      ) {
+        this.pushCommand({ type: 'spin.set', nx: 0, ny: 0 });
+        this.syncSpinPopupResetVisibility();
+      }
+      this.lastSpinPadTapMs = now;
+      this.lastSpinPadTapLen = tap.len;
+      this.spinPopupDragId = e.pointerId;
+      try {
+        this.spinPopupPad.setPointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+    });
+    this.spinPopupPad.addEventListener('pointermove', (e: PointerEvent) => {
+      if (this.spinPopupDragId !== e.pointerId) return;
+      pushSpinFromPadElement(this.spinPopupPad, e);
+    });
+    const finishSpinPopupDrag = (e: PointerEvent): void => {
+      if (this.spinPopupDragId !== e.pointerId) return;
+      this.spinPopupDragId = null;
+      try {
+        this.spinPopupPad.releasePointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+    };
+    this.spinPopupPad.addEventListener('pointerup', finishSpinPopupDrag);
+    this.spinPopupPad.addEventListener('pointercancel', finishSpinPopupDrag);
+
+    this.spinPopupReset.addEventListener('click', (e: MouseEvent) => {
+      e.stopPropagation();
+      this.playHudClickSound();
+      this.pushCommand({ type: 'spin.set', nx: 0, ny: 0 });
+      this.syncSpinPopupResetVisibility();
+    });
+    this.spinPopupClose.addEventListener('click', (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.playHudClickSound();
+      this.hideSpinPopup();
     });
 
     const statsClose = this.statsOverlay.querySelector('#hud-stats-close') as HTMLElement;
@@ -925,6 +1086,52 @@ export class HUD {
     this.bindPowerBarHandlers();
   }
 
+  private showSpinPopup(): void {
+    if (this.spinPopupVisible) return;
+    this.spinPopupVisible = true;
+    this.spinPopupOverlay.classList.add('show');
+    this.spinPopupOverlay.setAttribute('aria-hidden', 'false');
+    this.spinOpenBtn.setAttribute('aria-expanded', 'true');
+    const h = this.getHud();
+    const eb = h.eightBall;
+    if (eb) {
+      const lx = `${50 + eb.spinX * 46}%`;
+      const ty = `${50 + eb.spinY * 46}%`;
+      this.spinPopupDot.style.left = lx;
+      this.spinPopupDot.style.top = ty;
+      this.applySpinVisualFeedback(eb.spinX, eb.spinY);
+    }
+    this.syncSpinPopupResetVisibility();
+  }
+
+  private hideSpinPopup(): void {
+    if (!this.spinPopupVisible) return;
+    this.spinPopupVisible = false;
+    this.spinPopupDragId = null;
+    this.spinPopupOverlay.classList.remove('show');
+    this.spinPopupOverlay.setAttribute('aria-hidden', 'true');
+    this.spinOpenBtn.setAttribute('aria-expanded', 'false');
+  }
+
+  private syncSpinPopupResetVisibility(): void {
+    const eb = this.getHud().eightBall;
+    const sx = eb?.spinX ?? 0;
+    const sy = eb?.spinY ?? 0;
+    const centered = Math.hypot(sx, sy) < 0.035;
+    this.spinPopupReset.style.display = centered ? 'none' : '';
+  }
+
+  private applySpinVisualFeedback(spinX: number, spinY: number): void {
+    const sx = Math.max(-1, Math.min(1, spinX));
+    const sy = Math.max(-1, Math.min(1, spinY));
+    const len = Math.max(0, Math.min(1, Math.hypot(sx, sy)));
+    const rot = ((performance.now() * (0.06 + len * 0.2)) % 360) + Math.atan2(sy, sx) * (180 / Math.PI);
+    this.spinPopupBall.style.setProperty('--spin-rot', `${rot.toFixed(1)}deg`);
+    this.spinPopupBall.style.setProperty('--spin-energy', len.toFixed(3));
+    this.spinOpenBtn.style.setProperty('--spin-energy', len.toFixed(3));
+    this.spinPopupReadout.textContent = `X ${sx >= 0 ? '+' : ''}${sx.toFixed(2)} | Y ${sy >= 0 ? '+' : ''}${sy.toFixed(2)}`;
+  }
+
   private bindPowerBarHandlers(): void {
     const track = this.powerBarTrack;
     const valueFromClientY = (clientY: number): number => {
@@ -992,6 +1199,7 @@ export class HUD {
     const eb = h.eightBall;
     if (!eb) {
       this.applyPowerBarVisibility(h);
+      this.hideSpinPopup();
       return;
     }
 
@@ -1043,6 +1251,7 @@ export class HUD {
       if (this.achievementsVisible) this.renderAchievementsOverlay(h);
       if (this.tournamentVisible) this.renderTournamentOverlay(h);
       if (this.modeSelectVisible) this.renderModeSelectPage(h);
+      this.hideSpinPopup();
       return;
     }
 
@@ -1064,6 +1273,7 @@ export class HUD {
       if (this.achievementsVisible) this.renderAchievementsOverlay(h);
       if (this.tournamentVisible) this.renderTournamentOverlay(h);
       if (this.modeSelectVisible) this.renderModeSelectPage(h);
+      this.hideSpinPopup();
       return;
     }
 
@@ -1103,7 +1313,7 @@ export class HUD {
 
     const aiImg = this.topStack.querySelector('#ai-avatar-img') as HTMLImageElement;
     aiImg.src = opponentHudAvatarUrl(this.assetBaseUrl, opp.id);
-    if (opp.id === 'tungo') {
+    if (opp.id === 'tungo' || opp.id === 'torta_tartaruga' || opp.id === 'gattotto_otto') {
       aiImg.style.filter = '';
     } else {
       let hue = 0;
@@ -1165,25 +1375,35 @@ export class HUD {
     }
 
     const dot = this.topStack.querySelector('#spin-dot') as HTMLElement;
-    dot.style.left = `${50 + eb.spinX * 38}%`;
-    dot.style.top = `${50 + eb.spinY * 38}%`;
+    /** Dot travel radius inside the circular cue (% of ball diameter) */
+    const lx = `${50 + eb.spinX * 46}%`;
+    const ty = `${50 + eb.spinY * 46}%`;
+    dot.style.left = lx;
+    dot.style.top = ty;
+    this.spinPopupDot.style.left = lx;
+    this.spinPopupDot.style.top = ty;
+    this.applySpinVisualFeedback(eb.spinX, eb.spinY);
+
+    const canPickSpin =
+      eb.phase === 'PlayerTurn' && !h.cueBallInHandCursorHint && eb.activePlayer === 'player';
+    this.spinOpenBtn.disabled = !canPickSpin;
+    this.spinOpenBtn.style.opacity = canPickSpin ? '' : '0.5';
+    if (this.spinPopupVisible && !canPickSpin) {
+      this.hideSpinPopup();
+    }
+    if (this.spinPopupVisible) {
+      this.syncSpinPopupResetVisibility();
+    }
 
     if (this.statsVisibleFor) {
       this.renderStatsModal(this.statsVisibleFor, this.lastProfile, eb);
     }
     if (this.levelVisible) {
-      this.renderLevelOverlay(this.lastProfile, h.coinRewardWin ?? 0);
-    }
-
-    if (h.coinRewardWin != null) {
-      this.rewardWin.textContent = `${formatNumber(h.coinRewardWin)} 🪙`;
-      this.rewardWin.style.display = '';
-    } else {
-      this.rewardWin.textContent = '';
-      this.rewardWin.style.display = 'none';
+      this.renderLevelOverlay(this.lastProfile);
     }
 
     this.syncHudNotice(eb);
+    this.syncBallInHandHint(h);
 
     this.renderShopPanel(h);
 
@@ -1201,16 +1421,32 @@ export class HUD {
     if (!show) {
       this.powerBarWrap.style.display = 'none';
       this.powerBarWrap.classList.remove('hint');
+      this.tutorialPowerDrag.classList.remove('show');
       this.powerBarTrack.style.setProperty('--p', '0');
       this.powerBarTrack.style.setProperty('--heat', '0');
       return;
     }
     this.powerBarWrap.style.display = 'flex';
-    this.powerBarWrap.classList.toggle('hint', eb.powerBarHint === true);
+    this.powerBarWrap.classList.toggle(
+      'hint',
+      eb.powerBarHint === true || eb.tutorialShootHint === true,
+    );
+    const tutShow = eb.tutorialShootHint === true;
+    this.tutorialPowerDrag.classList.toggle('show', tutShow);
+    this.tutorialPowerDrag.setAttribute('aria-hidden', tutShow ? 'false' : 'true');
     if (!this.powerBarPointerDown) {
       this.powerBarTrack.style.setProperty('--p', '0');
       this.powerBarTrack.style.setProperty('--heat', '0');
     }
+  }
+
+  private syncBallInHandHint(h: HudState): void {
+    const show =
+      h.cueBallInHandCursorHint === true &&
+      h.eightBall?.phase === 'PlayerTurn' &&
+      h.eightBall?.activePlayer === 'player';
+    this.ballInHandHintLabel.classList.toggle('show', show);
+    this.ballInHandHintLabel.setAttribute('aria-hidden', show ? 'false' : 'true');
   }
 
   private renderStatsModal(
@@ -1251,7 +1487,7 @@ export class HUD {
       .join('');
   }
 
-  private renderLevelOverlay(profile: HudState['profile'] | null, coinRewardWin: number): void {
+  private renderLevelOverlay(profile: HudState['profile'] | null): void {
     if (!profile) return;
     const progress = Math.max(0, Math.min(1, profile.rankProgress01 ?? 0));
     const nextName = profile.nextRankName;
@@ -1270,14 +1506,11 @@ export class HUD {
     this.levelWinsNeeded.textContent = nextName
       ? `${formatNumber(winsNeeded)} more win${winsNeeded === 1 ? '' : 's'}`
       : '—';
-    this.levelReward.textContent = `${coinRewardWin > 0 ? '+' : ''}${formatNumber(
-      coinRewardWin,
-    )} 🪙 per win`;
   }
 
   private showLevelOverlay(): void {
     this.levelVisible = true;
-    this.renderLevelOverlay(this.lastProfile, this.getHud().coinRewardWin ?? 0);
+    this.renderLevelOverlay(this.lastProfile);
     this.levelOverlay.classList.add('show');
   }
 
@@ -1779,8 +2012,8 @@ export class HUD {
           </div>
         </div>
         <div class="modeselect-prize">
-          <div class="modeselect-prize-label">REWARD</div>
-          <div class="modeselect-prize-value">+50 coin · +60 XP per win</div>
+          <div class="modeselect-prize-label">XP</div>
+          <div class="modeselect-prize-value">+${formatNumber(XP_REWARD_WIN)} XP per win</div>
         </div>
         <div class="modeselect-fee modeselect-fee-free">FREE</div>
         <button class="btn primary modeselect-cta" type="button" data-mode-action="casual">Play</button>
@@ -1816,7 +2049,7 @@ export class HUD {
         </div>
         <div class="modeselect-prize">
           <div class="modeselect-prize-label">CHAMPION BONUS</div>
-          <div class="modeselect-prize-value">+${formatNumber(def.championBonusCoins)} 🪙 · +${formatNumber(def.championBonusXp)} XP</div>
+          <div class="modeselect-prize-value">+${formatNumber(def.championBonusXp)} XP</div>
         </div>
         <div class="modeselect-fee${canAfford ? '' : ' modeselect-fee-locked'}">
           ENTRY ${formatNumber(def.entryFeeCoins)} 🪙
@@ -2054,12 +2287,12 @@ export class HUD {
   }
 
   private syncEndOverlay(won: boolean, reason: string, h: HudState): void {
-    const title = this.end.querySelector('#end-title')!;
     const sub = this.end.querySelector('#end-sub')!;
     const oppReact = this.end.querySelector('#end-opp-react') as HTMLElement;
     const oppQuote = this.end.querySelector('#end-opp-quote') as HTMLElement;
     const me = h.eightBall?.matchEndOpponentPortrait;
-    if (won && me?.portraitAssetId) {
+    /** Win or loss: show Tungo (or future) match-end portrait when the engine provides one. */
+    if (me?.portraitAssetId) {
       const entry = AssetManifest[me.portraitAssetId as keyof typeof AssetManifest];
       const src = entry ? resolveBrowserAssetUrl(this.assetBaseUrl, entry.browserUrl) : '';
       oppReact.style.backgroundImage = src ? `url("${src}")` : '';
@@ -2077,15 +2310,15 @@ export class HUD {
     const isTournamentMidWin = won && t?.status === 'active';
     const isTournamentLoss = !won && t?.status === 'lost';
 
-    if (isTournamentChamp) {
-      title.textContent = 'TOURNAMENT CHAMPION';
-    } else if (isTournamentLoss) {
-      title.textContent = 'ELIMINATED';
+    if (won) {
+      this.endTitleImg.src = this.urlEndYouWon;
+      this.endTitleImg.alt = isTournamentChamp ? 'Tournament champion' : 'You won';
     } else {
-      title.textContent = won ? 'YOU WON' : 'YOU LOST';
+      this.endTitleImg.src = this.urlEndYouLose;
+      this.endTitleImg.alt = isTournamentLoss ? 'Eliminated' : 'You lost';
     }
-    title.classList.toggle('end-title-win', won);
-    title.classList.toggle('end-title-champion', isTournamentChamp);
+    this.endTitleWrap.classList.toggle('end-title-wrap--win', won);
+    this.endTitleWrap.classList.toggle('end-title-wrap--champion', isTournamentChamp);
 
     if (isTournamentChamp) {
       const bonusCoin = t?.championBonusCoins ?? 0;
@@ -2100,15 +2333,28 @@ export class HUD {
       sub.textContent = reason;
     }
 
+    const nextLabel = this.btnNext.querySelector('.btn-next-label') as HTMLElement | null;
     if (isTournamentChamp) {
-      this.btnNext.textContent = 'Back to Menu';
+      if (nextLabel) nextLabel.textContent = 'Back to Menu';
+      this.btnNext.setAttribute('aria-label', 'Back to menu');
+      this.btnNext.setAttribute('title', 'Back to Menu');
+      this.btnNext.setAttribute('data-home-icon', 'true');
     } else if (isTournamentMidWin && t) {
-      this.btnNext.textContent = `Next Match (${Math.min(t.currentRound + 1, t.size)}/${t.size})`;
+      const text = `Next Match (${Math.min(t.currentRound + 1, t.size)}/${t.size})`;
+      if (nextLabel) nextLabel.textContent = text;
+      this.btnNext.setAttribute('aria-label', text);
+      this.btnNext.setAttribute('title', text);
+      this.btnNext.setAttribute('data-home-icon', 'false');
     } else {
-      this.btnNext.textContent = 'Return to Home';
+      const text = 'Return to Home';
+      if (nextLabel) nextLabel.textContent = text;
+      this.btnNext.setAttribute('aria-label', text);
+      this.btnNext.setAttribute('title', text);
+      this.btnNext.setAttribute('data-home-icon', 'true');
     }
-    this.btnRematch.textContent = isTournamentLoss ? 'Back to Menu' : 'Rematch';
-
+    const nextIconOnly = this.btnNext.getAttribute('data-home-icon') === 'true';
+    this.btnNext.classList.toggle('primary', !nextIconOnly);
+    this.btnNext.classList.toggle('ghost', nextIconOnly);
     this.btnNext.style.display = won ? 'inline-flex' : 'none';
     this.btnRematch.style.display = won ? 'none' : 'inline-flex';
     const reward = won ? h.coinRewardWin ?? 0 : 0;
@@ -2170,8 +2416,11 @@ export class HUD {
     this.end.style.display = 'none';
     this.soundBtn.style.display = 'none';
     this.powerBarPointerDown = false;
+    this.spinPopupDragId = null;
+    this.hideSpinPopup();
     this.powerBarWrap.style.display = 'none';
     this.powerBarWrap.classList.remove('hint');
+    this.tutorialPowerDrag.classList.remove('show');
     this.powerBarTrack.style.setProperty('--p', '0');
     this.powerBarTrack.style.setProperty('--heat', '0');
     this.stopConfetti();
@@ -2183,6 +2432,8 @@ export class HUD {
     this.hideTournamentOverlay();
     this.hideMatchIntro();
     this.hideHudNotice();
+    this.ballInHandHintLabel.classList.remove('show');
+    this.ballInHandHintLabel.setAttribute('aria-hidden', 'true');
     this.hideNextMatchModal();
     this.hideLevelOverlay();
     this.clearHudTopBand();
@@ -2191,7 +2442,7 @@ export class HUD {
   private syncSoundButtonVisual(): void {
     this.soundBtnIcon.src = this.soundMuted ? SOUND_ICON_OFF_URL : SOUND_ICON_ON_URL;
     this.soundBtn.setAttribute('aria-pressed', this.soundMuted ? 'true' : 'false');
-    this.soundBtn.title = this.soundMuted ? 'Sound off' : 'Sound on';
+    this.soundBtn.title = this.soundMuted ? 'Music off' : 'Music on';
   }
 
   private showShopOverlay(): void {

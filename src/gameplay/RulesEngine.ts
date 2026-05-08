@@ -6,7 +6,11 @@ export type {
   BallMeta,
 } from './rules.types.js';
 
-export { kindToGroup, resolveEightBallRules } from './rules.types.js';
+export {
+  kindToGroup,
+  resolveEightBallRules,
+  isFirstHitLegalForAimPreview,
+} from './rules.types.js';
 
 import type { PlayerId } from '../core/types.js';
 import type { TurnResolution } from './rules.types.js';

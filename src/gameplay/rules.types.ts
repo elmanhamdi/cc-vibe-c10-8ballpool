@@ -58,6 +58,35 @@ function shooterMayContactEightFirst(ctx: RulesContext, shooter: PlayerId, balls
   return !ownRemaining;
 }
 
+/**
+ * Whether first contact with `firstHit` matches 8-ball first-hit rules (wrong ball / eight early).
+ * Used for tutorial aim warning only — does not evaluate rail-after-contact or called pockets.
+ */
+export function isFirstHitLegalForAimPreview(
+  ctx: RulesContext,
+  shooter: PlayerId,
+  firstHit: { kind: BallKind } | null,
+  balls: BallMeta[],
+): boolean {
+  if (!firstHit || firstHit.kind === 'cue') return true;
+
+  if (firstHit.kind === 'eight') {
+    return shooterMayContactEightFirst(ctx, shooter, balls);
+  }
+
+  if (ctx.openTable) {
+    return firstHit.kind === 'solid' || firstHit.kind === 'stripe';
+  }
+
+  const ownGroup = shooter === 'player' ? ctx.playerGroup : ctx.aiGroup;
+  if (!ownGroup) return true;
+
+  const g = kindToGroup(firstHit.kind);
+  if (!g) return true;
+
+  return g === ownGroup;
+}
+
 export function resolveEightBallRules(input: {
   ctx: RulesContext;
   shooter: PlayerId;

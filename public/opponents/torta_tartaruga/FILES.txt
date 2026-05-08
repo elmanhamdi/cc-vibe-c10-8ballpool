@@ -1,0 +1,32 @@
+Torta Tartaruga — assets served from /opponents/torta_tartaruga/ (Vite public/).
+
+hud/
+  avatar.png          — top-bar opponent portrait (AssetManifest: ui.opponent.torta_tartaruga.avatar)
+
+reactions/            — full-screen reaction JPGs (same triggers as Tungo)
+  Ball.jpg
+  Cry.jpg
+  LastBall (2).jpg
+  Laught.jpg
+  Scary.jpg
+  Smile.jpg
+  Time.jpg            — used for both `time` and `time2` triggers
+
+model/
+  Torta_Idle.fbx      — 3D idle behind the rail (same placement scale as Tungo_Idle.fbx)
+
+model/temp.fbm/       — REQUIRED for textured look if your FBX still references Meshy disk paths:
+  Image_0.jpg         — base color (same file Meshy put in temp.fbm when you exported)
+  Image_2.jpg         — normal map
+  Image_3.jpg         — emission / extra map (Meshy ties this to emission in many packs)
+
+Copy these three files from your original export folder (…\temp.fbm\) into:
+  public/opponents/torta_tartaruga/model/temp.fbm/
+
+The game loads them automatically; the FBX alone cannot load C:\\Users\\… paths in the browser.
+
+Optional audio/       — if you add VO clips later, wire them like Tungo taunts.
+
+Still dark?
+  • Confirm Network tab loads Image_0.jpg from …/temp.fbm/ (no 404).
+  • Engine fixes black Base Color × texture and extreme metalness without env map.

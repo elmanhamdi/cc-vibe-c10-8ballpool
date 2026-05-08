@@ -115,7 +115,26 @@ body {
 }
 
 .panel.end {
-  gap: 18px;
+  gap: clamp(10px, 2.5vw, 16px);
+  justify-content: flex-start;
+  align-items: center;
+  padding-top: clamp(20px, 5vh, 44px);
+  padding-bottom: clamp(20px, 5vh, 40px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/** YOU WON / YOU LOSE art — sits above the rounded end-card, not inside it */
+.end-result-hero {
+  flex: 0 0 auto;
+  width: 100%;
+  max-width: min(560px, 96vw);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  pointer-events: none;
+  /** Sit clearly below the panel top (stacked with padding-top on .panel.end) */
+  margin-top: clamp(8px, 2vh, 20px);
 }
 
 .end-card {
@@ -130,7 +149,7 @@ body {
 .end-opp-react {
   display: none;
   border-radius: 14px;
-  margin-bottom: 4px;
+  margin: 0 0 10px;
   min-height: 120px;
   background-size: contain;
   background-position: center top;
@@ -151,14 +170,23 @@ body {
   text-align: center;
 }
 
-.end-head .title {
-  font-size: 24px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+.end-title-wrap {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: clamp(96px, 28cqw, 160px);
 }
 
-.end-head .title.end-title-win {
-  color: #ffd86f;
+.end-title-img {
+  display: block;
+  width: min(100%, 520px);
+  height: auto;
+  max-height: min(42vh, 280px);
+  object-fit: contain;
+}
+
+.end-title-wrap--champion .end-title-img {
+  filter: drop-shadow(0 0 14px rgba(255, 210, 110, 0.65));
 }
 
 .end-head .sub {
@@ -224,9 +252,39 @@ body {
   padding: 14px 22px;
   background: linear-gradient(180deg, #ffd86f, #f7b500);
   color: #130b00;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
   box-shadow:
     0 6px 18px rgba(247, 181, 0, 0.35),
     0 0 0 1px rgba(0, 0, 0, 0.15) inset;
+}
+
+.btn-next-home-icon {
+  width: 58px;
+  height: 58px;
+  display: none;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.4));
+}
+
+.btn.btn-next[data-home-icon='true'] .btn-next-home-icon {
+  display: block;
+}
+
+.btn.btn-next[data-home-icon='true'] {
+  min-width: 64px;
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  border-radius: 50%;
+  gap: 0;
+  box-shadow: none;
+}
+
+.btn.btn-next[data-home-icon='true'] .btn-next-label {
+  display: none;
 }
 
 .btn.btn-next:active {
@@ -305,9 +363,10 @@ body {
 }
 
 .btn-icon-only .btn-icon {
-  width: 40px;
-  height: 40px;
+  width: 58px;
+  height: 58px;
   display: block;
+  object-fit: contain;
   pointer-events: none;
   user-select: none;
   filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.45));
@@ -329,7 +388,7 @@ body {
   right: clamp(4px, 1.6cqw, 8px);
   z-index: 3;
   box-sizing: border-box;
-  padding: clamp(4px, 1.4cqw, 6px) clamp(6px, 2cqw, 8px) clamp(6px, 2cqw, 8px);
+  padding: clamp(2px, 0.9cqw, 4px) clamp(4px, 1.5cqw, 6px) clamp(3px, 1.25cqw, 5px);
   display: none;
   flex-direction: column;
   justify-content: flex-start;
@@ -347,8 +406,8 @@ body {
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  gap: clamp(3px, 1.2cqw, 5px);
-  padding: clamp(6px, 2.2cqw, 8px) clamp(4px, 1.6cqw, 6px) clamp(7px, 2.4cqw, 10px);
+  gap: clamp(2px, 0.8cqw, 3px);
+  padding: clamp(3px, 1.45cqw, 5px) clamp(3px, 1.1cqw, 5px) clamp(4px, 1.65cqw, 6px);
   border-radius: 14px;
   background: linear-gradient(180deg, rgba(14, 32, 64, 0.9), rgba(10, 24, 52, 0.48));
   backdrop-filter: blur(8px);
@@ -356,7 +415,7 @@ body {
 
 .hud-top-main {
   display: grid;
-  grid-template-columns: minmax(0, 2.6fr) minmax(clamp(40px, 11cqw, 48px), 0.75fr) minmax(0, 2.6fr);
+  grid-template-columns: minmax(0, 2.6fr) minmax(clamp(36px, 10cqw, 44px), 0.72fr) minmax(0, 2.6fr);
   align-items: center;
   gap: clamp(4px, 1.6cqw, 6px);
   min-width: 0;
@@ -364,7 +423,7 @@ body {
 
 .hud-top-pots {
   display: grid;
-  grid-template-columns: minmax(0, 2.6fr) minmax(clamp(40px, 11cqw, 48px), 0.75fr) minmax(0, 2.6fr);
+  grid-template-columns: minmax(0, 2.6fr) minmax(clamp(36px, 10cqw, 44px), 0.72fr) minmax(0, 2.6fr);
   align-items: start;
   gap: clamp(3px, 1.2cqw, 4px) clamp(4px, 1.6cqw, 6px);
   min-width: 0;
@@ -453,10 +512,10 @@ body {
 
 /* Square avatar + shot-clock ring (conic border on active player) */
 .avatar-frame {
-  width: clamp(52px, 17cqw, 88px);
-  height: clamp(52px, 17cqw, 88px);
+  width: clamp(41px, 13.6cqw, 70px);
+  height: clamp(41px, 13.6cqw, 70px);
   flex-shrink: 0;
-  padding: clamp(3px, 1.2cqw, 6px);
+  padding: clamp(2px, 0.9cqw, 5px);
   border-radius: clamp(14px, 5.5cqw, 24px);
   box-sizing: border-box;
   background: rgba(88, 96, 112, 0.55);
@@ -469,7 +528,7 @@ body {
 }
 
 .avatar-frame.avatar-active {
-  transform: scale(1.2);
+  transform: scale(1.1);
   background: conic-gradient(
     from 0.25turn,
     #3ecf8c calc(var(--p, 1) * 360deg),
@@ -567,7 +626,7 @@ body {
 
 .side-name {
   font-weight: 750;
-  font-size: clamp(11px, 3.4cqw, 14px);
+  font-size: clamp(9px, 2.65cqw, 11px);
   line-height: 1.15;
   max-width: clamp(70px, 26cqw, 180px);
   overflow: hidden;
@@ -576,7 +635,7 @@ body {
 }
 
 .side-meta {
-  font-size: clamp(9px, 2.6cqw, 10px);
+  font-size: clamp(8px, 1.95cqw, 8.5px);
   opacity: 0.75;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -586,23 +645,13 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: clamp(4px, 1.6cqw, 6px);
-  min-width: clamp(40px, 12cqw, 54px);
+  gap: clamp(2px, 1.1cqw, 4px);
+  min-width: clamp(32px, 9.2cqw, 43px);
   padding-top: 2px;
   flex-shrink: 0;
 }
 
-.hud-reward {
-  font-size: clamp(9px, 2.8cqw, 11px);
-  opacity: 0.8;
-  padding: 3px clamp(5px, 2cqw, 8px);
-  border-radius: 10px;
-  background: rgba(40, 44, 52, 0.72);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #dff6ff;
-}
-
-.spin-top {
+.spin-top-wrap {
   padding: 0;
   background: transparent;
   flex-shrink: 0;
@@ -610,11 +659,201 @@ body {
 
 .spin.spin-center {
   padding: 2px 0;
+  gap: clamp(6px, 2.2cqw, 12px);
+}
+
+/** Top HUD: tap to open full hit-position dialog (no drag on this control). */
+.spin-open-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+  touch-action: manipulation;
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.22),
+    0 0 0 5px rgba(120, 200, 255, 0.12),
+    0 6px 18px rgba(0, 0, 0, 0.45),
+    0 0 calc(8px + var(--spin-energy, 0) * 14px) rgba(120, 210, 255, calc(0.1 + var(--spin-energy, 0) * 0.24));
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.spin-open-btn:hover:not(:disabled) {
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.38),
+    0 0 0 7px rgba(120, 200, 255, 0.2),
+    0 8px 22px rgba(0, 0, 0, 0.5);
+  transform: scale(1.03);
+}
+
+.spin-open-btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.spin-open-btn:disabled {
+  cursor: not-allowed;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
 }
 
 .cue-mini.cue-spin-main {
-  width: clamp(40px, 12.5cqw, 54px);
-  height: clamp(40px, 12.5cqw, 54px);
+  width: clamp(49px, 13.1cqw, 64px);
+  height: clamp(49px, 13.1cqw, 64px);
+  display: block;
+  border-width: 2px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+.cue-mini.cue-spin-main .spin-dot {
+  width: clamp(13px, 3.65cqw, 17px);
+  height: clamp(13px, 3.65cqw, 17px);
+}
+
+/* --- Hit position / spin modal --- */
+.hud-spin-popup {
+  position: absolute;
+  inset: 0;
+  z-index: 25;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.hud-spin-popup.show {
+  display: flex;
+  pointer-events: auto;
+}
+
+.hud-spin-popup-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(4, 8, 16, 0.62);
+  backdrop-filter: blur(3px);
+}
+
+.hud-spin-popup-panel {
+  position: relative;
+  z-index: 1;
+  width: min(400px, 96vw);
+  padding: 16px 18px 14px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(26, 38, 58, 0.96), rgba(10, 16, 28, 0.94));
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.hud-spin-popup-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  background: rgba(0, 0, 0, 0.32);
+  color: #f4f7ff;
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.hud-spin-popup-close:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.hud-spin-popup-title {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #dbe8ff;
+}
+
+.hud-spin-popup-readout {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(220, 234, 255, 0.9);
+}
+
+.spin-popup-inner {
+  padding: clamp(14px, 3vw, 22px) clamp(16px, 3.5vw, 28px);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.06);
+  touch-action: none;
+}
+
+/**
+ * Modal cue ball — no `.cue-mini` class (global `.cue-mini` is 54px and would override).
+ */
+.cue-spin-popup-ball {
+  position: relative;
+  --spin-rot: 0deg;
+  --spin-energy: 0;
+  width: min(280px, 72vmin, 88vw);
+  height: min(280px, 72vmin, 88vw);
+  max-width: min(300px, 92vw);
+  max-height: min(300px, 78vh);
+  aspect-ratio: 1;
+  border-radius: 999px;
+  background: radial-gradient(circle at 35% 35%, #ffffff, #cfd6e6);
+  border: 2px solid rgba(0, 0, 0, 0.28);
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.65),
+    0 10px 28px rgba(0, 0, 0, 0.4);
+}
+
+.cue-spin-popup-ball::after {
+  content: '';
+  position: absolute;
+  inset: 9% 9%;
+  border-radius: 999px;
+  border: 2px dashed rgba(20, 33, 56, calc(0.15 + var(--spin-energy) * 0.28));
+  transform: rotate(var(--spin-rot));
+  transition: transform 0.12s linear, border-color 0.12s ease;
+  pointer-events: none;
+}
+
+.spin-dot--popup {
+  width: clamp(60px, 18vmin, 92px);
+  height: clamp(60px, 18vmin, 92px);
+  border-width: 3px;
+  box-shadow:
+    0 0 0 2px rgba(0, 0, 0, 0.3),
+    0 0 0 6px rgba(255, 255, 255, 0.18),
+    0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+.hud-spin-popup-reset {
+  min-width: 120px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.08);
+  color: #f2f6ff;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+
+.hud-spin-popup-reset:hover {
+  background: rgba(255, 255, 255, 0.14);
 }
 
 .pot-label {
@@ -1482,20 +1721,18 @@ body {
 
 .spin-dot {
   position: absolute;
-  width: 12px;
-  height: 12px;
+  width: 16px;
+  height: 16px;
   border-radius: 999px;
   background: #c42a2a;
   transform: translate(-50%, -50%);
   left: 50%;
   top: 50%;
-  opacity: 0.85;
-  border: 1px solid rgba(0, 0, 0, 0.2);
-}
-
-.cue-spin-main .spin-dot {
-  width: 13px;
-  height: 13px;
+  opacity: 0.95;
+  border: 2px solid rgba(255, 255, 255, 0.72);
+  box-shadow:
+    0 0 0 2px rgba(0, 0, 0, 0.28),
+    0 0 0 5px rgba(255, 255, 255, 0.16);
 }
 
 .hud-sound-btn {
@@ -1707,6 +1944,43 @@ body {
   }
   50% {
     transform: translateY(4px);
+  }
+}
+
+/* First-run tutorial: drag cue along the power groove */
+.hud-tutorial-power-drag {
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 22%;
+  width: 44px;
+  height: 44px;
+  pointer-events: none;
+  z-index: 8;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease;
+}
+
+.hud-tutorial-power-drag.show {
+  opacity: 1;
+  visibility: visible;
+}
+
+.hud-tutorial-power-drag-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.55));
+  animation: hudTutorialDragCue 1.2s ease-in-out infinite;
+}
+
+@keyframes hudTutorialDragCue {
+  0%,
+  100% {
+    transform: translateY(-8px);
+  }
+  50% {
+    transform: translateY(14px);
   }
 }
 
@@ -3072,20 +3346,6 @@ body {
 }
 
 /* =====================================================================
-   Champion banner — end-card override when winning the final round
-   ===================================================================== */
-#end-title.end-title-champion {
-  background: linear-gradient(180deg, #fff5c8 0%, #ffd86f 45%, #ff9a3d 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  text-shadow:
-    0 2px 0 rgba(120, 60, 0, 0.35),
-    0 0 22px rgba(255, 200, 90, 0.55);
-  letter-spacing: 0.06em;
-}
-
-/* =====================================================================
    In-match tournament strip — name + bracket dots + counter pill
    ===================================================================== */
 .hud-tournament-strip {
@@ -3359,6 +3619,33 @@ body {
     0 0 28px rgba(255, 80, 50, 0.7),
     0 0 64px rgba(255, 60, 30, 0.5);
   -webkit-text-stroke: 2px #4a0a00;
+}
+
+/* Ball-in-hand helper (foul): shown near bottom center */
+.hud-ballinhand-hint {
+  position: absolute;
+  left: 50%;
+  bottom: clamp(18px, 4.2cqh, 42px);
+  transform: translateX(-50%) translateY(8px);
+  z-index: 17;
+  pointer-events: none;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(14, 20, 30, 0.78);
+  color: #d9f3ff;
+  font-size: clamp(12px, 3.5cqw, 16px);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.hud-ballinhand-hint.show {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
 }
 
 @keyframes hudNoticePop {

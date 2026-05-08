@@ -72,7 +72,8 @@ export class BrowserAudioAdapter {
   private sfxMasterGain: GainNode | null = null;
   private readonly sfxBufferCache = new Map<string, AudioBuffer>();
   private readonly sfxLoadInflight = new Map<string, Promise<AudioBuffer | null>>();
-  private muted = false;
+  /** Start with BGM muted; SFX remains independent. */
+  private bgmMuted = true;
 
   constructor(options?: BrowserAudioAdapterOptions) {
     this.assetBaseUrl = options?.assetBaseUrl ?? '/';
@@ -83,20 +84,18 @@ export class BrowserAudioAdapter {
    * ilk kullanıcı dokunuşunda burayı çağırın.
    */
   resumeBackgroundMusicIfNeeded(): void {
-    if (this.muted) return;
+    if (this.bgmMuted) return;
     void this.bgmCtx?.resume().catch(() => {});
-    void this.sfxCtx?.resume().catch(() => {});
     const h = this.bgmHtmlFallback;
     if (h?.paused) void h.play().catch(() => {});
   }
 
   isMuted(): boolean {
-    return this.muted;
+    return this.bgmMuted;
   }
 
   /** HUD / host: one-shot SFX outside `GameEvent` drain (respects mute; same gain chain as pool SFX). */
   playSoundEffect(soundId: string, volume = 1): void {
-    if (this.muted) return;
     const entry = AssetManifest[soundId as keyof typeof AssetManifest];
     if (!entry || entry.kind !== 'audio') return;
     const vol = Math.max(0, Math.min(1, volume * SFX_MASTER_GAIN));
@@ -104,21 +103,19 @@ export class BrowserAudioAdapter {
   }
 
   toggleMute(): boolean {
-    this.muted = !this.muted;
-    if (this.muted) {
+    this.bgmMuted = !this.bgmMuted;
+    if (this.bgmMuted) {
       void this.bgmCtx?.suspend().catch(() => {});
-      void this.sfxCtx?.suspend().catch(() => {});
       this.bgmHtmlFallback?.pause();
     } else {
       if (!this.bgmSource && !this.bgmHtmlFallback && this.bgmMusicId) {
         this.ensureBackgroundMusicLoop(this.bgmMusicId);
       }
       void this.bgmCtx?.resume().catch(() => {});
-      void this.sfxCtx?.resume().catch(() => {});
       const h = this.bgmHtmlFallback;
       if (h?.paused) void h.play().catch(() => {});
     }
-    return this.muted;
+    return this.bgmMuted;
   }
 
   consume(events: readonly GameEvent[]): void {
@@ -128,7 +125,6 @@ export class BrowserAudioAdapter {
         continue;
       }
       if (e.type !== 'sound') continue;
-      if (this.muted) continue;
       const entry = AssetManifest[e.soundId as keyof typeof AssetManifest];
       if (!entry || entry.kind !== 'audio') continue;
       const vol = Math.max(0, Math.min(1, (e.volume ?? 1) * SFX_MASTER_GAIN));
@@ -205,9 +201,7 @@ export class BrowserAudioAdapter {
   }
 
   private async playSfxAsync(entry: AssetManifestEntry, soundId: string, volume: number): Promise<void> {
-    if (this.muted) return;
     const buf = await this.decodeSfxBuffer(soundId, entry);
-    if (this.muted) return;
     if (!buf) {
       this.playWithExtensionFallback(entry, volume);
       return;
@@ -216,7 +210,6 @@ export class BrowserAudioAdapter {
   }
 
   private playSfxBufferInstance(buf: AudioBuffer, volume: number): void {
-    if (this.muted) return;
     let ctx: AudioContext;
     let master: GainNode;
     try {
@@ -263,7 +256,7 @@ export class BrowserAudioAdapter {
   }
 
   private ensureBackgroundMusicLoop(musicId: string): void {
-    if (this.muted) {
+    if (this.bgmMuted) {
       const prev = this.bgmMusicId;
       this.bgmMusicId = musicId;
       if (prev !== musicId) {
@@ -315,7 +308,7 @@ export class BrowserAudioAdapter {
         const res = await fetch(url);
         if (!res.ok) continue;
         const ab = await res.arrayBuffer();
-        if (gen !== this.bgmLoadGen || this.muted) return;
+        if (gen !== this.bgmLoadGen || this.bgmMuted) return;
 
         let ctx: AudioContext;
         try {
@@ -329,7 +322,7 @@ export class BrowserAudioAdapter {
 
         await ctx.resume().catch(() => {});
         const buf = await ctx.decodeAudioData(ab.slice(0));
-        if (gen !== this.bgmLoadGen || this.muted) return;
+        if (gen !== this.bgmLoadGen || this.bgmMuted) return;
 
         this.stopBgmSource();
         if (!this.bgmGain) return;
@@ -355,7 +348,7 @@ export class BrowserAudioAdapter {
 
   /** Yalnızca `AudioContext` yoksa veya oluşturulamazsa. */
   private ensureBackgroundMusicLoopHtmlFallback(musicId: string): void {
-    if (this.muted) {
+    if (this.bgmMuted) {
       this.bgmMusicId = musicId;
       return;
     }

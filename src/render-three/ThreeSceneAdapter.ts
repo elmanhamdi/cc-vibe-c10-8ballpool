@@ -112,6 +112,8 @@ export class ThreeSceneAdapter {
   /** Top numarası → diffuse (1–15, 0 = isteka); paylaşılan `Texture` referansı. */
   private readonly ballDiffuseByNumber = new Map<number, THREE.Texture>();
   private readonly assetBaseUrl: string;
+  /** Global phase for tutorial rim pulse (seconds). */
+  private tutorialGlowPhase = 0;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -469,6 +471,7 @@ export class ThreeSceneAdapter {
   }
 
   private syncWorldObjects(objects: readonly WorldObjectState[], dtSec: number): void {
+    this.tutorialGlowPhase += dtSec * 2.65;
     const seen = new Set<string>();
     for (const o of objects) {
       seen.add(o.objectId);
@@ -499,9 +502,11 @@ export class ThreeSceneAdapter {
           mesh.visible = true;
           this.applyTransform(mesh, o);
           this.applyBallRollVisual(mesh, o, dtSec);
+          this.syncTutorialBallGlow(mesh, o.tags);
         } else {
           mesh.visible = false;
           this.applyTransform(mesh, o);
+          this.syncTutorialBallGlow(mesh, undefined);
         }
         continue;
       }
@@ -638,7 +643,29 @@ export class ThreeSceneAdapter {
     if (o.templateId === AssetIds.opponentTungPlaceholder) {
       const root = new THREE.Group();
       this.loadTungBackdropBrickWall(root);
-      this.loadTungIdleFbxInto(root);
+      this.loadOpponentIdleFbx(root, 'opponents/tungo/model/Tungo_Idle.fbx', 'Tungo_Idle.fbx', 1);
+      return root;
+    }
+    if (o.templateId === AssetIds.opponentGattottoPlaceholder) {
+      const root = new THREE.Group();
+      this.loadTungBackdropBrickWall(root);
+      this.loadOpponentIdleFbx(
+        root,
+        'opponents/gattotto_otto/model/Idle.fbx',
+        'Idle.fbx',
+        0.75,
+      );
+      return root;
+    }
+    if (o.templateId === AssetIds.opponentTortaPlaceholder) {
+      const root = new THREE.Group();
+      this.loadTungBackdropBrickWall(root);
+      this.loadOpponentIdleFbx(
+        root,
+        'opponents/torta_tartaruga/model/Torta_Idle.fbx',
+        'Torta_Idle.fbx',
+        0.9375,
+      );
       return root;
     }
     const ball = parseBallTemplate(o.templateId);
@@ -651,6 +678,64 @@ export class ThreeSceneAdapter {
       return mesh;
     }
     return null;
+  }
+
+  /**
+   * Tutorial “your balls” hint: additive rim shells (BackSide) — does not tint the ball texture.
+   * Tags `tutorialHL:red` / `tutorialHL:orange` pick rim colors for solids 1 / 3 (tutorial).
+   */
+  private syncTutorialBallGlow(mesh: THREE.Mesh, tags: readonly string[] | undefined): void {
+    const enabled = tags?.includes('tutorialHighlight') ?? false;
+    let rim0 = mesh.userData.tutorialRim0 as THREE.Mesh | undefined;
+    let rim1 = mesh.userData.tutorialRim1 as THREE.Mesh | undefined;
+    if (!rim0 || !rim1) {
+      const mkMat = (hex: number) =>
+        new THREE.MeshBasicMaterial({
+          color: hex,
+          transparent: true,
+          opacity: 0.42,
+          side: THREE.BackSide,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+        });
+      rim0 = new THREE.Mesh(this.ballGeo, mkMat(0xff3333));
+      rim0.scale.setScalar(1.104);
+      rim0.renderOrder = 4;
+      mesh.add(rim0);
+      mesh.userData.tutorialRim0 = rim0;
+      rim1 = new THREE.Mesh(this.ballGeo, mkMat(0xff6644));
+      rim1.scale.setScalar(1.162);
+      rim1.renderOrder = 3;
+      mesh.add(rim1);
+      mesh.userData.tutorialRim1 = rim1;
+    }
+    if (!enabled) {
+      rim0.visible = false;
+      rim1.visible = false;
+      return;
+    }
+    let c0 = 0x33eeff;
+    let c1 = 0x66ffff;
+    if (tags?.includes('tutorialHL:orange')) {
+      c0 = 0xff8800;
+      c1 = 0xffcc44;
+    } else if (tags?.includes('tutorialHL:red')) {
+      c0 = 0xff2222;
+      c1 = 0xff6644;
+    }
+    (rim0.material as THREE.MeshBasicMaterial).color.setHex(c0);
+    (rim1.material as THREE.MeshBasicMaterial).color.setHex(c1);
+    rim0.visible = true;
+    rim1.visible = true;
+    const t = this.tutorialGlowPhase;
+    const waveA = 0.38 + 0.36 * Math.sin(t * 1.12);
+    const waveB = 0.38 + 0.36 * Math.sin(t * 1.12 + 1.85);
+    const breatheA = 1 + 0.048 * Math.sin(t * 2.05);
+    const breatheB = 1 + 0.038 * Math.sin(t * 2.05 + 1.1);
+    (rim0.material as THREE.MeshBasicMaterial).opacity = Math.min(0.92, waveA * 0.62);
+    (rim1.material as THREE.MeshBasicMaterial).opacity = Math.min(0.82, waveB * 0.52);
+    rim0.scale.setScalar(1.104 * breatheA);
+    rim1.scale.setScalar(1.162 * breatheB);
   }
 
   private applyTransform(obj: THREE.Object3D, o: WorldObjectState): void {
@@ -738,11 +823,160 @@ export class ThreeSceneAdapter {
       });
   }
 
-  /** `public/opponents/tungo/model/Tungo_Idle.fbx` — ölçek + pivot ayaklar container orijininde. */
-  private loadTungIdleFbxInto(container: THREE.Group): void {
+  /**
+   * FBX exports often set `color` to black while baking diffuse into `map` — in Three.js that multiplies
+   * to black. High metalness without `scene.environment` also reads as black mirrors.
+   */
+  private normalizeIdleFbxMaterials(root: THREE.Object3D): void {
+    const noEnv = this.scene.environment == null;
+    root.traverse((o) => {
+      if (!(o instanceof THREE.Mesh)) return;
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      for (const raw of mats) {
+        if (!raw) continue;
+
+        const setMapSRGB = (tex: THREE.Texture | null | undefined) => {
+          if (!tex) return;
+          tex.colorSpace = THREE.SRGBColorSpace;
+          tex.needsUpdate = true;
+        };
+        const setDataTexLinear = (tex: THREE.Texture | null | undefined) => {
+          if (!tex) return;
+          tex.colorSpace = THREE.LinearSRGBColorSpace;
+          tex.needsUpdate = true;
+        };
+
+        if (raw instanceof THREE.MeshStandardMaterial || raw instanceof THREE.MeshPhysicalMaterial) {
+          if (raw.map) setMapSRGB(raw.map);
+          if (raw.emissiveMap) setMapSRGB(raw.emissiveMap);
+          if (raw.normalMap) setDataTexLinear(raw.normalMap);
+          if (raw.roughnessMap) setDataTexLinear(raw.roughnessMap);
+          if (raw.metalnessMap) setDataTexLinear(raw.metalnessMap);
+          if (raw.aoMap) setDataTexLinear(raw.aoMap);
+
+          /** FBX often leaves diffuse multiplier black — kills textured albedo. */
+          if (raw.map && raw.color.getHex() === 0x000000) {
+            raw.color.setHex(0xffffff);
+          }
+          /** Metallic PBR without `scene.environment` reads almost black. */
+          if (noEnv && raw.metalness > 0.65) {
+            raw.metalness = Math.min(raw.metalness * 0.45, 0.42);
+            raw.roughness = Math.max(raw.roughness, 0.42);
+          }
+          raw.envMapIntensity = Math.min(raw.envMapIntensity ?? 1, noEnv ? 0.35 : 1);
+          raw.needsUpdate = true;
+          continue;
+        }
+
+        if (raw instanceof THREE.MeshPhongMaterial || raw instanceof THREE.MeshLambertMaterial) {
+          if (raw.map) setMapSRGB(raw.map);
+          if (raw.map && raw.color.getHex() === 0x000000) {
+            raw.color.setHex(0xffffff);
+          }
+          raw.needsUpdate = true;
+        }
+      }
+    });
+  }
+
+  /**
+   * Many FBX exports (Meshy, Blender) store **absolute disk paths** to textures — browsers never resolve those,
+   * so materials render black. If you copy `temp.fbm/Image_0.jpg` (+ `_2`, `_3`) next to the FBX under
+   * `public/.../model/temp.fbm/`, we bind them here (same convention as typical Meshy `_texture_fbx` packs).
+   */
+  private bindIdleFbmTexturesFromPublicFolder(
+    root: THREE.Object3D,
+    fbxUrl: string,
+    opts: { hintLabel?: string },
+  ): void {
+    const dir = fbxUrl.slice(0, fbxUrl.lastIndexOf('/') + 1);
+    const candidates = (file: string): string[] => [`${dir}temp.fbm/${file}`, `${dir}${file}`];
+
+    const tl = new THREE.TextureLoader();
+    const loadFirst = async (file: string): Promise<THREE.Texture | null> => {
+      for (const url of candidates(file)) {
+        try {
+          return await tl.loadAsync(url);
+        } catch {
+          /* try next */
+        }
+      }
+      return null;
+    };
+
+    void Promise.all([
+      loadFirst('Image_0.jpg'),
+      loadFirst('Image_2.jpg'),
+      loadFirst('Image_3.jpg'),
+    ]).then(([diffuse, normalMap, emissiveMap]) => {
+      let any = false;
+      root.traverse((obj) => {
+        if (!(obj instanceof THREE.Mesh)) return;
+        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+        for (const raw of mats) {
+          if (!raw) continue;
+          if (
+            raw instanceof THREE.MeshStandardMaterial ||
+            raw instanceof THREE.MeshPhysicalMaterial
+          ) {
+            if (diffuse) {
+              raw.map = diffuse;
+              raw.color.setHex(0xffffff);
+              any = true;
+            }
+            if (normalMap) {
+              normalMap.colorSpace = THREE.LinearSRGBColorSpace;
+              raw.normalMap = normalMap;
+              normalMap.needsUpdate = true;
+              any = true;
+            }
+            if (emissiveMap) {
+              emissiveMap.colorSpace = THREE.SRGBColorSpace;
+              raw.emissiveMap = emissiveMap;
+              raw.emissive.setHex(0xffffff);
+              raw.emissiveIntensity = Math.max(raw.emissiveIntensity ?? 1, 0.5);
+              any = true;
+            }
+            raw.needsUpdate = true;
+          } else if (raw instanceof THREE.MeshPhongMaterial || raw instanceof THREE.MeshLambertMaterial) {
+            if (diffuse) {
+              raw.map = diffuse;
+              raw.color.setHex(0xffffff);
+              any = true;
+              raw.needsUpdate = true;
+            }
+          }
+        }
+      });
+
+      if (any) {
+        this.normalizeIdleFbxMaterials(root);
+      } else if (
+        opts.hintLabel?.includes('torta') ||
+        fbxUrl.includes('torta_tartaruga') ||
+        fbxUrl.includes('gattotto_otto')
+      ) {
+        console.warn(
+          '[ThreeSceneAdapter] FBX textures point at local disk paths — copy Meshy `temp.fbm/Image_0.jpg`, `Image_2.jpg`, `Image_3.jpg` into public folder:',
+          `${dir}temp.fbm/`,
+        );
+      }
+    });
+  }
+
+  /**
+   * Idle opponent mesh behind the rail — same scale/pivot as Tungo (`OPPONENT_TUNG_MODEL_TARGET_HEIGHT`).
+   * @param relativePath e.g. `opponents/torta_tartaruga/model/Torta_Idle.fbx`
+   */
+  private loadOpponentIdleFbx(
+    container: THREE.Group,
+    relativePath: string,
+    logLabel: string,
+    scaleMul = 1,
+  ): void {
     if (container.userData.tungLoadState === 'loading' || container.userData.tungLoadState === 'done') return;
     container.userData.tungLoadState = 'loading';
-    const href = resolveBrowserAssetUrl(this.assetBaseUrl, 'opponents/tungo/model/Tungo_Idle.fbx');
+    const href = resolveBrowserAssetUrl(this.assetBaseUrl, relativePath);
     const loader = new FBXLoader();
     loader.load(
       href,
@@ -753,10 +987,11 @@ export class ThreeSceneAdapter {
             o.receiveShadow = true;
           }
         });
+        this.normalizeIdleFbxMaterials(fbx);
         fbx.updateMatrixWorld(true);
         const box0 = new THREE.Box3().setFromObject(fbx);
         const size = box0.getSize(new THREE.Vector3());
-        const sy = OPPONENT_TUNG_MODEL_TARGET_HEIGHT / Math.max(size.y, 1e-4);
+        const sy = (OPPONENT_TUNG_MODEL_TARGET_HEIGHT / Math.max(size.y, 1e-4)) * scaleMul;
         fbx.scale.setScalar(sy);
         fbx.updateMatrixWorld(true);
         let box2 = new THREE.Box3().setFromObject(fbx);
@@ -767,6 +1002,7 @@ export class ThreeSceneAdapter {
         fbx.position.x -= c.x;
         fbx.position.z -= c.z;
         container.add(fbx);
+        this.bindIdleFbmTexturesFromPublicFolder(fbx, href, { hintLabel: logLabel });
         if (fbx.animations.length > 0) {
           const mixer = new THREE.AnimationMixer(fbx);
           const action = mixer.clipAction(fbx.animations[0]!);
@@ -779,7 +1015,7 @@ export class ThreeSceneAdapter {
       },
       undefined,
       (err) => {
-        console.warn('[ThreeSceneAdapter] Tungo_Idle.fbx load failed:', err);
+        console.warn(`[ThreeSceneAdapter] ${logLabel} load failed:`, err);
         container.userData.tungLoadState = 'error';
       },
     );

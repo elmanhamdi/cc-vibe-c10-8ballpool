@@ -6,6 +6,7 @@ import {
   resolveEightBallRules,
   resolveTurnTimeout,
   kindToGroup,
+  isFirstHitLegalForAimPreview,
   type RulesContext,
   type BallMeta,
   type TurnResolution,
@@ -15,16 +16,18 @@ import { CAREER_OPPONENTS } from '../ai/AICharacters.js';
 import { evaluateDirectShot, ownTargetsFor, type AIWorldView as EvaluatorWorldView } from '../ai/ShotEvaluator.js';
 import { tierParams } from '../ai/DifficultyProfiles.js';
 import {
-  pickTungoLine,
+  defaultPortraitReactionAssetId,
+  hasPortraitReactionOpponent,
+  pickPortraitReactionLine,
+  portraitReactionAssetId,
   randomTimeReactionKind,
-  TUNGO_DEFAULT_REACTION_ASSET_ID,
-  tungoReactionAssetId,
-  type TungoReactionKind,
-} from '../opponents/tungoReactions.js';
-import type { AICharacterProfile } from '../ai/types.js';
+  type PortraitReactionKind,
+} from '../opponents/opponentPortraitReactions.js';
+import type { AICharacterProfile, DifficultyTier } from '../ai/types.js';
 import { DialogueManager } from '../systems/DialogueManager.js';
 import type { DialogueCategory } from '../systems/dialogueLines.js';
-import { computeAimPreview } from '../gameplay/AimPreview.js';
+import { computeAimPreview, findFirstRayHitBall } from '../gameplay/AimPreview.js';
+import { applyTutorialMidgameLayout } from '../gameplay/tutorialLayout.js';
 import type { Game, GameInputCommand, RenderRuntimeHints, ViewportSize } from './gameContract.js';
 import type { GameEvent } from '../world/GameEvents.js';
 import type {
@@ -75,6 +78,7 @@ import { SHOP_CUE_CATALOG } from './ShopCatalog.js';
 import { type TournamentRun, createPendingRun } from './Tournament.js';
 import {
   type TournamentDef,
+  type TournamentOpponentSlot,
   type TournamentTier,
   findTournament,
   listTournamentViews,
@@ -82,6 +86,91 @@ import {
 import { Vec2 } from '../physics/Vec2.js';
 
 const PROFILE_STORAGE_KEY = 'vertical-eight-ball.profile.v1';
+const TUTORIAL_STORAGE_KEY = 'vertical-eight-ball.tutorial.v1.completed';
+const DIFFICULTY_TIER_ORDER: readonly DifficultyTier[] = [
+  'apprentice',
+  'beginner',
+  'intermediate',
+  'skilled',
+  'advanced',
+  'expert',
+  'master',
+];
+
+function difficultyTierIndex(tier: DifficultyTier): number {
+  const idx = DIFFICULTY_TIER_ORDER.indexOf(tier);
+  return idx < 0 ? 0 : idx;
+}
+
+function tierFromIndex(index: number): DifficultyTier {
+  const i = Math.max(0, Math.min(DIFFICULTY_TIER_ORDER.length - 1, Math.round(index)));
+  return DIFFICULTY_TIER_ORDER[i]!;
+}
+
+type OpponentDialogueBehavior = {
+  silenceChance: number;
+  tauntChance: number;
+  praiseChance: number;
+  aiGoodShotChance: number;
+  timeoutReactionChance: number;
+  noBallHitReactionChance: number;
+  foulReactionChance: number;
+  missReactionChance: number;
+};
+
+const DEFAULT_DIALOGUE_BEHAVIOR: OpponentDialogueBehavior = {
+  silenceChance: 0.16,
+  tauntChance: 0.5,
+  praiseChance: 0.3,
+  aiGoodShotChance: 0.42,
+  timeoutReactionChance: 0.7,
+  noBallHitReactionChance: 0.58,
+  foulReactionChance: 0.34,
+  missReactionChance: 0.34,
+};
+
+const DIALOGUE_BEHAVIOR_BY_OPPONENT_ID: Record<string, OpponentDialogueBehavior> = {
+  tungo: {
+    silenceChance: 0.07,
+    tauntChance: 0.76,
+    praiseChance: 0.2,
+    aiGoodShotChance: 0.68,
+    timeoutReactionChance: 0.9,
+    noBallHitReactionChance: 0.82,
+    foulReactionChance: 0.52,
+    missReactionChance: 0.56,
+  },
+  torta_tartaruga: {
+    silenceChance: 0.2,
+    tauntChance: 0.35,
+    praiseChance: 0.52,
+    aiGoodShotChance: 0.38,
+    timeoutReactionChance: 0.62,
+    noBallHitReactionChance: 0.5,
+    foulReactionChance: 0.25,
+    missReactionChance: 0.22,
+  },
+  gattotto_otto: {
+    silenceChance: 0.14,
+    tauntChance: 0.44,
+    praiseChance: 0.58,
+    aiGoodShotChance: 0.34,
+    timeoutReactionChance: 0.7,
+    noBallHitReactionChance: 0.6,
+    foulReactionChance: 0.28,
+    missReactionChance: 0.3,
+  },
+};
+
+function readTutorialCompleted(): boolean {
+  if (typeof localStorage === 'undefined') return true;
+  return localStorage.getItem(TUTORIAL_STORAGE_KEY) === '1';
+}
+
+function writeTutorialCompleted(): void {
+  if (typeof localStorage === 'undefined') return;
+  localStorage.setItem(TUTORIAL_STORAGE_KEY, '1');
+}
 
 /** Shortest-path lerp on the circle (radians). */
 function lerpAngleRad(from: number, to: number, t: number): number {
@@ -132,6 +221,8 @@ export class GameEngine implements Game {
   private aiCameraBlendTarget = 0;
   /** İlk break öncesi oyuncu turunda kamera preset A (açılış) kadrajında; bir kez biter. */
   private awaitingFirstPlayerBreakShot = true;
+  /** Tutorial ilk ekranında açılış kamerasını break mantığından bağımsız kullan. */
+  private tutorialOpeningCameraActive = false;
   /** True for the ball simulation that follows the opening break stroke (illegal-break rules). */
   private activeShotIsOpeningBreak = false;
   /** İlk oyuncu vuruşunda blend 1→0 ile üst kadraja yumuşak dönüş (lookAt/Y offset dahil). */
@@ -152,6 +243,13 @@ export class GameEngine implements Game {
   private profile: PlayerProfile = defaultProfile();
   /** Active tournament run; null while in casual / main menu. Runtime-only (no persistence). */
   private tournament: TournamentRun | null = null;
+  /** Casual mode picks a fresh random opponent per match start. */
+  private casualOpponentId: string | null = null;
+
+  /** First-run guided match (mid-game vs Tungo); cleared after completion storage. */
+  private tutorialActive = false;
+  /** Pulse power bar + drag cursor until the player’s first stroke in the tutorial. */
+  private tutorialShootHint = false;
 
   /** Center “reaction portrait” moment (TTL); cleared with match / dialogue tick cadence. */
   private opponentReaction: {
@@ -173,14 +271,19 @@ export class GameEngine implements Game {
   } | null = null;
   private hudNoticeBeatSeq = 0;
 
-  /** Tungo Biliardo — consecutive pots where the player keeps the table (for “scared” beat). */
-  private tungoPlayerRun = 0;
-  private tungoLastBallReactionUsed = false;
-  /** Match-end overlay when the player wins vs Tungo (reaction art + line). */
-  private tungoMatchEndCry: { portraitAssetId: string; text: string } | null = null;
+  /** Portrait-reaction opponents — consecutive pots where the player keeps the table (“scared” beat). */
+  private portraitReactionStreak = 0;
+  private portraitLastBallReactionUsed = false;
+  /** Match-end strip (portrait + line) for opponents with a reaction roster (Tungo, Torta Tartaruga, …). */
+  private matchEndOpponentPortrait: { portraitAssetId: string; text: string } | null = null;
 
   readonly poolInput = new PoolInputState();
   private readonly eventQueue: GameEvent[] = [];
+
+  private resetPlayerSpin(): void {
+    this.spinX = 0;
+    this.spinY = 0;
+  }
 
   constructor(options?: GameEngineOptions) {
     const ballRadius = options?.ballRadius ?? 8.1;
@@ -189,17 +292,21 @@ export class GameEngine implements Game {
     this.ai = new AIController(CAREER_OPPONENTS[0]!);
     this.profile = this.loadProfileFromStorage();
     this.ensureEquippedStats();
-    /**
-     * Initialize physics + AI for the first match so the table renders behind the menu,
-     * then drop back to `MainMenu` so the new hub UI is the entry point. Pressing PLAY
-     * (`menu.play`) will re-run `beginCareer` to flip the phase into `PlayerTurn`.
-     */
-    this.beginCareer(0);
-    this.phase = 'MainMenu';
-    this.turnClock.stop();
-    /** Replace the match BGM queued by `beginCareer` with the menu (between-games) loop. */
-    this.eventQueue.length = 0;
-    this.pushMusicStart(AssetIds.musicBgBetweenGames);
+    if (!readTutorialCompleted()) {
+      this.beginTutorialMatch();
+    } else {
+      /**
+       * Initialize physics + AI for the first match so the table renders behind the menu,
+       * then drop back to `MainMenu` so the new hub UI is the entry point. Pressing PLAY
+       * (`menu.play`) will re-run `beginCareer` to flip the phase into `PlayerTurn`.
+       */
+      this.beginCareer(0);
+      this.phase = 'MainMenu';
+      this.turnClock.stop();
+      /** Replace the match BGM queued by `beginCareer` with the menu (between-games) loop. */
+      this.eventQueue.length = 0;
+      this.pushMusicStart(AssetIds.musicBgBetweenGames);
+    }
   }
 
   reset(seed?: number): void {
@@ -370,13 +477,73 @@ export class GameEngine implements Game {
     return Math.random() < 0.5 ? AssetIds.musicBgMatch2 : AssetIds.musicBgMatch3;
   }
 
+  private pickRandomCasualOpponentId(): string {
+    const idx = Math.floor(Math.random() * CAREER_OPPONENTS.length);
+    return CAREER_OPPONENTS[Math.max(0, Math.min(idx, CAREER_OPPONENTS.length - 1))]!.id;
+  }
+
+  private getCareerStepStrength(): number {
+    return Math.max(this.levelIndex, this.profile.highestLevelIndex);
+  }
+
+  private scaleOpponentTier(
+    baseTier: DifficultyTier,
+    opts?: Pick<TournamentOpponentSlot, 'tierOffset' | 'minTier' | 'maxTier' | 'fixedTier'>,
+  ): DifficultyTier {
+    if (opts?.fixedTier) return opts.fixedTier;
+    const careerBoost = Math.max(0, this.getCareerStepStrength());
+    const offset = opts?.tierOffset ?? 0;
+    const baseIdx = difficultyTierIndex(baseTier);
+    const minIdx = opts?.minTier ? difficultyTierIndex(opts.minTier) : 0;
+    const maxIdx = opts?.maxTier ? difficultyTierIndex(opts.maxTier) : DIFFICULTY_TIER_ORDER.length - 1;
+    const scaled = baseIdx + careerBoost + offset;
+    const clamped = Math.max(minIdx, Math.min(maxIdx, scaled));
+    return tierFromIndex(clamped);
+  }
+
+  private findBaseOpponentById(id: string): AICharacterProfile | undefined {
+    return CAREER_OPPONENTS.find((o) => o.id === id);
+  }
+
+  private resolveCurrentTournamentSlot(): TournamentOpponentSlot | null {
+    const t = this.tournament;
+    if (!t || t.status !== 'active') return null;
+    return t.opponents[t.currentRound] ?? null;
+  }
+
+  private resolveOpponentFromSlot(slot: TournamentOpponentSlot): AICharacterProfile | null {
+    const base = this.findBaseOpponentById(slot.id);
+    if (!base) return null;
+    return {
+      ...base,
+      tier: this.scaleOpponentTier(base.tier, slot),
+    };
+  }
+
+  private resolveCasualOpponentById(id: string): AICharacterProfile | null {
+    const base = this.findBaseOpponentById(id);
+    if (!base) return null;
+    return {
+      ...base,
+      tier: this.scaleOpponentTier(base.tier),
+    };
+  }
+
   getOpponent(): AICharacterProfile {
-    if (this.tournament && this.tournament.status === 'active') {
-      const id = this.tournament.opponents[this.tournament.currentRound];
-      const found = id ? CAREER_OPPONENTS.find((o) => o.id === id) : undefined;
-      if (found) return found;
+    const tournamentSlot = this.resolveCurrentTournamentSlot();
+    if (tournamentSlot) {
+      const resolved = this.resolveOpponentFromSlot(tournamentSlot);
+      if (resolved) return resolved;
     }
-    return CAREER_OPPONENTS[Math.min(this.levelIndex, CAREER_OPPONENTS.length - 1)]!;
+    if (this.casualOpponentId) {
+      const resolved = this.resolveCasualOpponentById(this.casualOpponentId);
+      if (resolved) return resolved;
+    }
+    const fallback = CAREER_OPPONENTS[Math.min(this.levelIndex, CAREER_OPPONENTS.length - 1)]!;
+    return {
+      ...fallback,
+      tier: this.scaleOpponentTier(fallback.tier),
+    };
   }
 
   /** Planned shot (angle + power) for drawing the cue during `AITurn`. */
@@ -392,6 +559,11 @@ export class GameEngine implements Game {
 
   beginCareer(levelIndex: number): void {
     this.levelIndex = Math.max(0, Math.min(levelIndex, CAREER_OPPONENTS.length - 1));
+    if (this.tournament && this.tournament.status === 'active') {
+      this.casualOpponentId = null;
+    } else {
+      this.casualOpponentId = this.pickRandomCasualOpponentId();
+    }
     const opp = this.getOpponent();
     this.ai.setProfile(opp);
     this.rulesCtx.openTable = true;
@@ -400,13 +572,14 @@ export class GameEngine implements Game {
     this.physics.resetRack();
     this.physics.placeCueBallForBreak();
     this.activePlayer = 'player';
+    this.resetPlayerSpin();
     this.turnClock.beginTurn('player');
     this.dialogue.clearBubble();
     this.opponentReaction = null;
     this.hudNotice = null;
-    this.tungoPlayerRun = 0;
-    this.tungoLastBallReactionUsed = false;
-    this.tungoMatchEndCry = null;
+    this.portraitReactionStreak = 0;
+    this.portraitLastBallReactionUsed = false;
+    this.matchEndOpponentPortrait = null;
     this.pressureSent = false;
     this.pendingAI = null;
     this.phase = 'PlayerTurn';
@@ -415,6 +588,7 @@ export class GameEngine implements Game {
     this.poolInput.resetStroke();
     this.poolInput.aimDragging = false;
     this.awaitingFirstPlayerBreakShot = true;
+    this.tutorialOpeningCameraActive = false;
     this.awaitingFirstAiShot = true;
     this.awaitingBallInHandPlacement = false;
     this.ballInHandDragging = false;
@@ -424,6 +598,65 @@ export class GameEngine implements Game {
     this.aiCameraBlend = 0;
     this.aiCameraBlendTarget = 0;
     this.pushMusicStart(this.pickRandomMatchBgmId());
+  }
+
+  /**
+   * First launch: mid-game 8-ball vs Tungo, groups assigned, few balls for a short teaching run.
+   * Skips the main menu until the match is left via the normal end card (then `writeTutorialCompleted`).
+   */
+  private beginTutorialMatch(): void {
+    this.tutorialActive = true;
+    this.tutorialShootHint = true;
+    this.levelIndex = 0;
+    this.tournament = null;
+    this.casualOpponentId = 'tungo';
+    const opp = this.getOpponent();
+    this.ai.setProfile(opp);
+    this.rulesCtx.openTable = false;
+    this.rulesCtx.playerGroup = 'solid';
+    this.rulesCtx.aiGroup = 'stripe';
+    this.physics.resetRack();
+    applyTutorialMidgameLayout(this.table, this.physics);
+    this.activePlayer = 'player';
+    this.resetPlayerSpin();
+    this.turnClock.beginTurn('player');
+    this.dialogue.clearBubble();
+    this.opponentReaction = null;
+    this.hudNotice = null;
+    this.portraitReactionStreak = 0;
+    this.portraitLastBallReactionUsed = false;
+    this.matchEndOpponentPortrait = null;
+    this.pressureSent = false;
+    this.pendingAI = null;
+    this.lastHudReason = `${opp.name} — ${opp.tier}`;
+    this.lastMatchWon = null;
+    this.poolInput.resetStroke();
+    this.poolInput.aimDragging = false;
+    this.awaitingFirstPlayerBreakShot = false;
+    this.tutorialOpeningCameraActive = true;
+    this.awaitingFirstAiShot = true;
+    this.awaitingBallInHandPlacement = false;
+    this.ballInHandDragging = false;
+    this.aiCueBallPlacementSlide = null;
+    this.activeShotIsOpeningBreak = false;
+    this.openingShotCameraReturnActive = false;
+    this.aiCameraBlend = 0;
+    this.aiCameraBlendTarget = 0;
+    this.phase = 'PlayerTurn';
+    this.eventQueue.length = 0;
+    this.syncTutorialInitialAimTowardFirstTargetBall();
+    this.pushMusicStart(this.pickRandomMatchBgmId());
+  }
+
+  /** Aim the cue at solid 1 before the player moves — tutorial intro line. */
+  private syncTutorialInitialAimTowardFirstTargetBall(): void {
+    const cue = this.physics.cue;
+    const target = this.physics.balls.find((b) => b.number === 1 && b.active);
+    if (!cue.active || !target) return;
+    const dx = target.pos.x - cue.pos.x;
+    const dy = target.pos.y - cue.pos.y;
+    if (dx * dx + dy * dy < 8) return;
+    this.poolInput.aimAngle = Math.atan2(dy, dx);
   }
 
   /** After a casual career win, advance the ladder. Tournament wins do **not** bump. */
@@ -447,14 +680,14 @@ export class GameEngine implements Game {
     const def = findTournament(defId);
     if (!def) return false;
     if (this.profile.coins < def.entryFeeCoins) return false;
-    const opponents = def.pickOpponents(CAREER_OPPONENTS);
-    if (opponents.length < def.matchCount) return false;
+    const opponentSlots = def.pickOpponents(CAREER_OPPONENTS);
+    if (opponentSlots.length < def.matchCount) return false;
     /** Deduct entry fee up front; refunds are not granted on forfeit/elimination. */
     if (def.entryFeeCoins > 0) {
       this.profile.coins -= def.entryFeeCoins;
       this.saveProfileToStorage();
     }
-    this.tournament = createPendingRun(defId, opponents.slice(0, def.matchCount));
+    this.tournament = createPendingRun(defId, opponentSlots.slice(0, def.matchCount));
     /** Stay in the menu phase so the bracket overlay can introduce the run. */
     this.phase = 'MainMenu';
     this.turnClock.stop();
@@ -505,14 +738,23 @@ export class GameEngine implements Game {
     if (!this.physics.cue.active) return false;
     const cueStats = this.findCue(this.profile.equippedCueId)?.stats ?? { power: 1, aim: 1, spin: 1 };
     const isOpeningBreak = this.awaitingFirstPlayerBreakShot;
+    const isTutorialOpeningShot = this.tutorialOpeningCameraActive;
+    if (this.tutorialShootHint) this.tutorialShootHint = false;
     let p = Math.max(0.1, Math.min(1, power01 * cueStats.power));
     /** Opening break: modest boost so mid-slider still splits (was 1.2x + 0.08). */
     if (isOpeningBreak) {
       p = Math.min(1, p * 1.06 + 0.045);
     }
+    /** Continuous spin — no preset snap; physics still picks nearest preset for risk tuning in `CollisionSystem`. */
     spinX = Math.max(-1, Math.min(1, spinX * cueStats.spin));
     spinY = Math.max(-1, Math.min(1, spinY * cueStats.spin));
     this.activeShotIsOpeningBreak = isOpeningBreak;
+    if (isTutorialOpeningShot) {
+      this.tutorialOpeningCameraActive = false;
+      this.aiCameraBlend = 1;
+      this.aiCameraBlendTarget = 0;
+      this.openingShotCameraReturnActive = true;
+    }
     if (isOpeningBreak) {
       this.awaitingFirstPlayerBreakShot = false;
       this.aiCameraBlend = 1;
@@ -520,6 +762,7 @@ export class GameEngine implements Game {
       this.openingShotCameraReturnActive = true;
     }
     this.physics.applyShot(angle, p, spinX, spinY);
+    this.resetPlayerSpin();
     this.physics.beginShot();
     this.pushSound(AssetIds.soundCueStrike, 0.55);
     this.phase = 'BallSimulation';
@@ -566,8 +809,19 @@ export class GameEngine implements Game {
       cueY: this.physics.cue.pos.y,
       cueRadius: this.physics.cue.radius,
       spinSetter: (nx, ny) => {
-        this.spinX = nx;
-        this.spinY = ny;
+        if (this.phase !== 'PlayerTurn' || !this.physics.cue.active || this.awaitingBallInHandPlacement) {
+          return;
+        }
+        const x = Math.max(-1, Math.min(1, nx));
+        const y = Math.max(-1, Math.min(1, ny));
+        const m = Math.hypot(x, y);
+        if (m > 1e-6 && m > 1) {
+          this.spinX = x / m;
+          this.spinY = y / m;
+          return;
+        }
+        this.spinX = x;
+        this.spinY = y;
       },
       requestShot: (angle, power, sx, sy) => {
         void this.requestPlayerShot(angle, power, sx, sy);
@@ -774,9 +1028,14 @@ export class GameEngine implements Game {
     this.maybeTaunt(res, shooter, shot);
     this.emitTurnNotices(res);
 
-    const tungoOpp = this.getOpponent();
-    if (tungoOpp.id === 'tungo' && shooter === 'player' && !res.playerWon && !res.playerLost) {
-      this.updateTungoStreakAfterMaybeTaunt(res);
+    const streakOpp = this.getOpponent();
+    if (
+      hasPortraitReactionOpponent(streakOpp.id) &&
+      shooter === 'player' &&
+      !res.playerWon &&
+      !res.playerLost
+    ) {
+      this.updatePortraitReactionStreakAfterMaybeTaunt(res);
     }
 
     if (res.respawnCueInKitchen) {
@@ -784,13 +1043,24 @@ export class GameEngine implements Game {
     }
 
     if (res.playerWon || res.playerLost) {
-      if (res.playerWon && this.getOpponent().id === 'tungo') {
-        this.tungoMatchEndCry = {
-          portraitAssetId: tungoReactionAssetId('cry'),
-          text: pickTungoLine('cry'),
-        };
+      const endOpp = this.getOpponent();
+      /**
+       * Match-end portrait strip: cry art when they lose, laugh when you lose.
+       */
+      if (hasPortraitReactionOpponent(endOpp.id)) {
+        if (res.playerWon) {
+          this.matchEndOpponentPortrait = {
+            portraitAssetId: portraitReactionAssetId(endOpp.id, 'cry'),
+            text: pickPortraitReactionLine(endOpp.id, 'cry'),
+          };
+        } else {
+          this.matchEndOpponentPortrait = {
+            portraitAssetId: portraitReactionAssetId(endOpp.id, 'laught'),
+            text: pickPortraitReactionLine(endOpp.id, 'laught'),
+          };
+        }
       } else {
-        this.tungoMatchEndCry = null;
+        this.matchEndOpponentPortrait = null;
       }
       this.phase = 'MatchEnd';
       this.turnClock.stop();
@@ -827,6 +1097,7 @@ export class GameEngine implements Game {
       this.turnClock.beginTurn('player');
       this.pendingAI = null;
       this.aiCameraBlendTarget = 0;
+      this.resetPlayerSpin();
       this.awaitingBallInHandPlacement = foulBallInHand;
     } else {
       this.phase = 'AITurn';
@@ -875,8 +1146,12 @@ export class GameEngine implements Game {
         this.awaitingFirstAiShot || Math.random() >= AI_CAMERA_CINEMATIC_CHANCE ? 0 : 1;
     }
 
-    if (this.getOpponent().id === 'tungo' && this.phase === 'PlayerTurn' && this.activePlayer === 'player') {
-      this.maybeTungoLastBallReactionOnPlayerTurnStart();
+    if (
+      hasPortraitReactionOpponent(this.getOpponent().id) &&
+      this.phase === 'PlayerTurn' &&
+      this.activePlayer === 'player'
+    ) {
+      this.maybePortraitLastBallReactionOnPlayerTurnStart();
     }
   }
 
@@ -892,48 +1167,51 @@ export class GameEngine implements Game {
   }
 
   /** First time per rack the player aims with only the 8 left to legally shoot (once per match). */
-  private maybeTungoLastBallReactionOnPlayerTurnStart(): void {
+  private maybePortraitLastBallReactionOnPlayerTurnStart(): void {
     if (this.opponentReaction) return;
-    if (this.tungoLastBallReactionUsed) return;
+    if (this.portraitLastBallReactionUsed) return;
     if (!this.playerIsOnEightBallOnly()) return;
-    const text = pickTungoLine('lastBall');
-    this.scheduleTungoReaction('lastBall', text, { force: true });
-    this.tungoLastBallReactionUsed = true;
+    const oid = this.getOpponent().id;
+    const text = pickPortraitReactionLine(oid, 'lastBall');
+    this.schedulePortraitReaction('lastBall', text, { force: true });
+    this.portraitLastBallReactionUsed = true;
   }
 
-  private updateTungoStreakAfterMaybeTaunt(res: TurnResolution): void {
+  private updatePortraitReactionStreakAfterMaybeTaunt(res: TurnResolution): void {
     if (res.playerWon || res.playerLost) return;
     if (res.foul !== 'none' || !res.continueWithSamePlayer) {
-      this.tungoPlayerRun = 0;
+      this.portraitReactionStreak = 0;
       return;
     }
-    this.tungoPlayerRun += 1;
-    if (this.opponentReaction || this.tungoPlayerRun !== 2) return;
+    this.portraitReactionStreak += 1;
+    if (this.opponentReaction || this.portraitReactionStreak !== 2) return;
     if (Math.random() > 0.42) return;
-    const text = pickTungoLine('scary');
-    this.scheduleTungoReaction('scary', text, { force: true });
+    const oid = this.getOpponent().id;
+    const text = pickPortraitReactionLine(oid, 'scary');
+    this.schedulePortraitReaction('scary', text, { force: true });
   }
 
-  private tungoReactionRollProbability(badShot: boolean): number {
+  private portraitReactionRollProbability(badShot: boolean): number {
     const endgameLow = this.countActiveTableBallsExcludingCue() <= 2;
     if (badShot && endgameLow) return 0.52;
     if (badShot) return 0.36;
     return 0.18;
   }
 
-  private scheduleTungoReaction(
-    kind: TungoReactionKind,
+  private schedulePortraitReaction(
+    kind: PortraitReactionKind,
     text: string,
     opts: { force?: boolean; reactionProb?: number },
   ): void {
-    if (this.getOpponent().id !== 'tungo') return;
+    const oid = this.getOpponent().id;
+    if (!hasPortraitReactionOpponent(oid)) return;
     if (this.opponentReaction) return;
     const p = opts.force ? 1 : (opts.reactionProb ?? 0.36);
     if (Math.random() > p) return;
 
     const ttl = OPPONENT_REACTION_TTL_MIN_SEC + Math.random() * OPPONENT_REACTION_TTL_RANDOM_SEC;
     this.opponentReactionBeatSeq += 1;
-    const portraitAssetId = tungoReactionAssetId(kind);
+    const portraitAssetId = portraitReactionAssetId(oid, kind);
     this.opponentReaction = {
       text,
       ttl,
@@ -946,38 +1224,60 @@ export class GameEngine implements Game {
     this.playRandomReactionSound();
   }
 
-  private maybeTauntTungo(
+  private maybeTauntPortraitOpponent(
     res: TurnResolution,
     shooter: PlayerId,
     shot: ShotOutcome | undefined,
-    silentChance: number,
+    behavior: OpponentDialogueBehavior,
   ): void {
     const opp = this.getOpponent();
+    const oid = opp.id;
 
     if (shooter === 'ai' && res.foul === 'none' && res.continueWithSamePlayer) {
-      void this.tryDialogue('ai_good_shot', opp, silentChance);
+      if (Math.random() < behavior.aiGoodShotChance) {
+        void this.tryDialogue('ai_good_shot', opp, behavior.silenceChance);
+      }
       return;
     }
 
     if (shooter !== 'player') return;
 
+    if (
+      res.foul === 'none' &&
+      res.continueWithSamePlayer &&
+      shot &&
+      shot.potted.length > 0 &&
+      Math.random() < behavior.praiseChance
+    ) {
+      void this.tryDialogue('player_nice', opp, behavior.silenceChance * 0.35);
+      const praiseLine = pickPortraitReactionLine(oid, 'smile');
+      this.schedulePortraitReaction('smile', praiseLine, { reactionProb: 0.26 });
+      return;
+    }
+
     if (res.foul !== 'none') {
       if (res.foul === 'turn_timeout') {
-        const tk = randomTimeReactionKind();
-        const lineKey = tk === 'time' ? 'time' : 'time2';
-        const text = pickTungoLine(lineKey);
-        this.scheduleTungoReaction(tk, text, { force: true });
+        if (Math.random() < behavior.timeoutReactionChance) {
+          const tk = randomTimeReactionKind();
+          const lineKey = tk === 'time' ? 'time' : 'time2';
+          const text = pickPortraitReactionLine(oid, lineKey);
+          this.schedulePortraitReaction(tk, text, { force: true });
+        }
         return;
       }
       if (res.foul === 'no_ball_hit') {
-        const text = pickTungoLine('ball');
-        this.scheduleTungoReaction('ball', text, { force: true });
+        if (Math.random() < behavior.noBallHitReactionChance) {
+          const text = pickPortraitReactionLine(oid, 'ball');
+          this.schedulePortraitReaction('ball', text, { force: true });
+        }
         return;
       }
-      if (Math.random() < silentChance) return;
-      const text = pickTungoLine('smile');
-      const rp = this.tungoReactionRollProbability(true);
-      this.scheduleTungoReaction('smile', text, { reactionProb: rp });
+      if (Math.random() > behavior.tauntChance) return;
+      if (Math.random() < behavior.silenceChance) return;
+      const text = pickPortraitReactionLine(oid, 'smile');
+      const rp = this.portraitReactionRollProbability(true) * behavior.foulReactionChance;
+      this.schedulePortraitReaction('smile', text, { reactionProb: rp });
+      void this.tryDialogue('player_foul', opp, behavior.silenceChance);
       return;
     }
 
@@ -987,10 +1287,12 @@ export class GameEngine implements Game {
       shot &&
       shot.potted.length === 0
     ) {
-      if (Math.random() < silentChance) return;
-      const text = pickTungoLine('laught');
-      const rp = this.tungoReactionRollProbability(true);
-      this.scheduleTungoReaction('laught', text, { reactionProb: rp });
+      if (Math.random() > behavior.tauntChance) return;
+      if (Math.random() < behavior.silenceChance) return;
+      const text = pickPortraitReactionLine(oid, 'laught');
+      const rp = this.portraitReactionRollProbability(true) * behavior.missReactionChance;
+      this.schedulePortraitReaction('laught', text, { reactionProb: rp });
+      void this.tryDialogue('player_miss', opp, behavior.silenceChance);
     }
   }
 
@@ -1036,17 +1338,30 @@ export class GameEngine implements Game {
 
   private maybeTaunt(res: TurnResolution, shooter: PlayerId, shot?: ShotOutcome): void {
     const opp = this.getOpponent();
-    const silentChance = opp.personality === 'silent' ? 0.55 : opp.personality === 'calm' ? 0.18 : 0.08;
+    const behavior = this.getOpponentDialogueBehavior(opp);
 
     if (res.playerWon || res.playerLost) return;
 
-    if (opp.id === 'tungo') {
-      this.maybeTauntTungo(res, shooter, shot, silentChance);
+    if (hasPortraitReactionOpponent(opp.id)) {
+      this.maybeTauntPortraitOpponent(res, shooter, shot, behavior);
+      return;
+    }
+
+    if (
+      shooter === 'player' &&
+      res.foul === 'none' &&
+      res.continueWithSamePlayer &&
+      shot &&
+      shot.potted.length > 0 &&
+      Math.random() < behavior.praiseChance
+    ) {
+      void this.tryDialogue('player_nice', opp, behavior.silenceChance * 0.35);
       return;
     }
 
     if (shooter === 'player' && res.foul !== 'none') {
-      const sc = res.foul === 'turn_timeout' ? silentChance * 0.45 : silentChance;
+      if (Math.random() > behavior.tauntChance) return;
+      const sc = res.foul === 'turn_timeout' ? behavior.silenceChance * 0.45 : behavior.silenceChance;
       const spoken = this.tryDialogue('player_foul', opp, sc);
       this.maybeScheduleOpponentReaction(spoken, res, shooter, shot);
       return;
@@ -1060,13 +1375,23 @@ export class GameEngine implements Game {
       shot &&
       shot.potted.length === 0
     ) {
-      const spoken = this.tryDialogue('player_miss', opp, silentChance);
+      if (Math.random() > behavior.tauntChance) return;
+      const spoken = this.tryDialogue('player_miss', opp, behavior.silenceChance);
       this.maybeScheduleOpponentReaction(spoken, res, shooter, shot);
     }
 
-    if (shooter === 'ai' && res.foul === 'none' && res.continueWithSamePlayer) {
-      void this.tryDialogue('ai_good_shot', opp, silentChance);
+    if (
+      shooter === 'ai' &&
+      res.foul === 'none' &&
+      res.continueWithSamePlayer &&
+      Math.random() < behavior.aiGoodShotChance
+    ) {
+      void this.tryDialogue('ai_good_shot', opp, behavior.silenceChance);
     }
+  }
+
+  private getOpponentDialogueBehavior(opp: AICharacterProfile): OpponentDialogueBehavior {
+    return DIALOGUE_BEHAVIOR_BY_OPPONENT_ID[opp.id] ?? DEFAULT_DIALOGUE_BEHAVIOR;
   }
 
   private countActiveTableBallsExcludingCue(): number {
@@ -1119,6 +1444,7 @@ export class GameEngine implements Game {
   private tryDialogue(cat: DialogueCategory, opp: AICharacterProfile, silentChance?: number): string | null {
     return this.dialogue.trySpeak(cat, {
       personalitySilentChance: silentChance,
+      opponentId: opp.id,
     });
   }
 
@@ -1267,12 +1593,15 @@ export class GameEngine implements Game {
         ? (() => {
             const t = this.tournament!;
             const def = findTournament(t.defId);
-            const opponentMeta = t.opponents.map((id) => {
-              const profile = CAREER_OPPONENTS.find((o) => o.id === id);
+            const opponentMeta = t.opponents.map((slot) => {
+              const profile = CAREER_OPPONENTS.find((o) => o.id === slot.id);
+              const tier = profile
+                ? this.scaleOpponentTier(profile.tier, slot)
+                : slot.fixedTier ?? slot.minTier ?? 'apprentice';
               return {
-                id,
-                name: profile?.name ?? id,
-                tier: profile?.tier ?? 'apprentice',
+                id: slot.id,
+                name: profile?.name ?? slot.id,
+                tier,
               };
             });
             return {
@@ -1340,8 +1669,16 @@ export class GameEngine implements Game {
           !this.opponentReaction &&
           !this.awaitingBallInHandPlacement &&
           this.physics.cue.active,
+        tutorialShootHint:
+          this.tutorialShootHint &&
+          this.tutorialActive &&
+          this.activePlayer === 'player' &&
+          snap.phase === 'PlayerTurn' &&
+          !this.opponentReaction &&
+          !this.awaitingBallInHandPlacement &&
+          this.physics.cue.active,
         matchEndOpponentPortrait:
-          snap.phase === 'MatchEnd' ? this.tungoMatchEndCry : null,
+          snap.phase === 'MatchEnd' ? this.matchEndOpponentPortrait : null,
         hudNotice: this.hudNotice
           ? {
               kind: this.hudNotice.kind,
@@ -1411,11 +1748,13 @@ export class GameEngine implements Game {
     /** Oyuncu turunda da `aiCameraBlend` işler; böylece rakip kadrajından yumuşak dönüş olur. */
     /** O tuşu: tam sinematik rakip kadrajı (normal oyunda `aiCameraBlend === 1` anına denk). */
     /** Maç başı: break öncesi ilk oyuncu turunda preset A kadrajı (blend 1). */
+    const openingIntroCameraActive =
+      (this.awaitingFirstPlayerBreakShot || this.tutorialOpeningCameraActive) &&
+      this.activePlayer === 'player' &&
+      this.phase === 'PlayerTurn';
     const blend = debugOppShotCam
       ? 1
-      : this.awaitingFirstPlayerBreakShot &&
-          this.activePlayer === 'player' &&
-          this.phase === 'PlayerTurn'
+      : openingIntroCameraActive
         ? 1
         : this.aiCameraBlend;
     const aiPolar =
@@ -1431,10 +1770,7 @@ export class GameEngine implements Game {
     const cp = Math.cos(polar);
     const ca = Math.cos(azimuth);
     const sa = Math.sin(azimuth);
-    const openingDecorT =
-      this.awaitingFirstPlayerBreakShot &&
-      this.activePlayer === 'player' &&
-      this.phase === 'PlayerTurn'
+    const openingDecorT = openingIntroCameraActive
         ? 1
         : this.openingShotCameraReturnActive && this.activePlayer === 'player'
           ? this.aiCameraBlend
@@ -1477,9 +1813,24 @@ export class GameEngine implements Game {
     };
 
     const objects: WorldObjectState[] = [];
+    const pg = this.rulesCtx.playerGroup;
+    const highlightOwn =
+      this.tutorialActive &&
+      this.phase === 'PlayerTurn' &&
+      !this.awaitingBallInHandPlacement &&
+      !this.opponentReaction &&
+      pg != null;
+
     for (const b of this.physics.balls) {
       const r = b.radius;
       const pos = vec3(b.pos.x - tw / 2, r + 0.15, b.pos.y - th / 2);
+      const grp = kindToGroup(b.kind);
+      const tags: readonly string[] | undefined = (() => {
+        if (!highlightOwn || grp == null || grp !== pg) return undefined;
+        if (b.number === 1) return ['tutorialHighlight', 'tutorialHL:red'];
+        if (b.number === 3) return ['tutorialHighlight', 'tutorialHL:orange'];
+        return ['tutorialHighlight'];
+      })();
       objects.push({
         objectId: `ball.${b.id}`,
         templateId: ballTemplateId(b.kind, b.number),
@@ -1489,22 +1840,48 @@ export class GameEngine implements Game {
         replication: 'sharedGameplay',
         renderLayer: 'world',
         tableVelocity: { x: b.vel.x, y: b.vel.y },
+        tags,
       });
     }
 
     const opponentId = this.getOpponent().id;
-    if (this.phase !== 'MainMenu' && this.phase !== 'MatchEnd' && opponentId === 'tungo') {
+    if (this.phase !== 'MainMenu' && this.phase !== 'MatchEnd') {
       const feltY = cue.radius + 0.15 + OPPONENT_TUNG_WORLD_Y_OFFSET;
-      const tz = -(th * 0.5) - OPPONENT_TUNG_PLACEHOLDER_PAST_RAIL_Z;
-      objects.push({
-        objectId: 'opponent.tungPlaceholder',
-        templateId: AssetIds.opponentTungPlaceholder,
-        transform: transformAt(vec3(OPPONENT_TUNG_PLACEHOLDER_OFFSET_X, feltY, tz), uniformScale(1)),
-        visible: true,
-        lifetime: 'persistent',
-        replication: 'localCosmetic',
-        renderLayer: 'world',
-      });
+      /** New FBX rigs sit visually forward; push them deeper behind the top rail. */
+      const extraBackZ =
+        opponentId === 'gattotto_otto' ? 120 : opponentId === 'torta_tartaruga' ? 96 : 0;
+      const tz = -(th * 0.5) - OPPONENT_TUNG_PLACEHOLDER_PAST_RAIL_Z - extraBackZ;
+      if (opponentId === 'tungo') {
+        objects.push({
+          objectId: 'opponent.tungPlaceholder',
+          templateId: AssetIds.opponentTungPlaceholder,
+          transform: transformAt(vec3(OPPONENT_TUNG_PLACEHOLDER_OFFSET_X, feltY, tz), uniformScale(1)),
+          visible: true,
+          lifetime: 'persistent',
+          replication: 'localCosmetic',
+          renderLayer: 'world',
+        });
+      } else if (opponentId === 'gattotto_otto') {
+        objects.push({
+          objectId: 'opponent.gattottoPlaceholder',
+          templateId: AssetIds.opponentGattottoPlaceholder,
+          transform: transformAt(vec3(OPPONENT_TUNG_PLACEHOLDER_OFFSET_X, feltY, tz), uniformScale(1)),
+          visible: true,
+          lifetime: 'persistent',
+          replication: 'localCosmetic',
+          renderLayer: 'world',
+        });
+      } else if (opponentId === 'torta_tartaruga') {
+        objects.push({
+          objectId: 'opponent.tortaPlaceholder',
+          templateId: AssetIds.opponentTortaPlaceholder,
+          transform: transformAt(vec3(OPPONENT_TUNG_PLACEHOLDER_OFFSET_X, feltY, tz), uniformScale(1)),
+          visible: true,
+          lifetime: 'persistent',
+          replication: 'localCosmetic',
+          renderLayer: 'world',
+        });
+      }
     }
 
     const aiPlan = this.phase === 'AITurn' && cue.active ? this.getAiCuePreview() : null;
@@ -1598,6 +1975,40 @@ export class GameEngine implements Game {
           ),
         );
       }
+      if (preview.cueImpactPoint) {
+        polylines.push(
+          contactRingPolyline(
+            'line.aim.contactRing',
+            AssetIds.lineGhostCue,
+            preview.cueImpactPoint.x,
+            preview.cueImpactPoint.y,
+            cue.radius,
+            lineY,
+            tw,
+            th,
+            aiPlan ? '#cbefff' : '#ffffff',
+            aiPlan ? 0.52 : 0.6,
+          ),
+        );
+      }
+
+      if (this.tutorialActive && this.phase === 'PlayerTurn' && !aiPlan && !this.opponentReaction) {
+        const first = findFirstRayHitBall(this.physics.balls, cue, effectiveAim, this.rulesCtx);
+        const meta: BallMeta[] = this.physics.balls.map((bb) => ({
+          id: bb.id,
+          number: bb.number,
+          kind: bb.kind,
+          active: bb.active,
+        }));
+        if (
+          first &&
+          !isFirstHitLegalForAimPreview(this.rulesCtx, 'player', first, meta)
+        ) {
+          polylines.push(
+            ...tutorialIllegalFirstHitXPolylines(preview.cueToHit.x1, preview.cueToHit.y1, tw, th, lineY),
+          );
+        }
+      }
     }
 
     if (hints.physicsDebugVisible) {
@@ -1678,9 +2089,19 @@ export class GameEngine implements Game {
   private applyMenuCommands(commands: readonly GameInputCommand[]): void {
     for (const c of commands) {
       if (c.type === 'menu.restart') {
+        if (this.tutorialActive) {
+          writeTutorialCompleted();
+          this.tutorialActive = false;
+          this.tutorialShootHint = false;
+        }
         /** Tournament mode never offers a Rematch from the end-card, so this is always casual. */
         this.beginCareer(this.levelIndex);
       } else if (c.type === 'menu.next') {
+        if (this.tutorialActive) {
+          writeTutorialCompleted();
+          this.tutorialActive = false;
+          this.tutorialShootHint = false;
+        }
         if (this.tournament && this.tournament.status === 'active') {
           /** Tournament wins flow through bracket overlay → `tournament.advance`; ignore here. */
           continue;
@@ -1688,6 +2109,11 @@ export class GameEngine implements Game {
         this.bumpLevelAfterVictory();
         this.beginCareer(this.levelIndex);
       } else if (c.type === 'menu.home') {
+        if (this.tutorialActive) {
+          writeTutorialCompleted();
+          this.tutorialActive = false;
+          this.tutorialShootHint = false;
+        }
         this.beginCareer(this.levelIndex);
       } else if (c.type === 'menu.play' || c.type === 'menu.startCasual') {
         if (this.phase === 'MainMenu') {
@@ -1720,7 +2146,7 @@ export class GameEngine implements Game {
     const ttl = OPPONENT_REACTION_TTL_MIN_SEC + Math.random() * OPPONENT_REACTION_TTL_RANDOM_SEC;
     this.opponentReactionBeatSeq += 1;
     const opp = this.getOpponent();
-    const portraitAssetId = opp.id === 'tungo' ? TUNGO_DEFAULT_REACTION_ASSET_ID : null;
+    const portraitAssetId = defaultPortraitReactionAssetId(opp.id);
     this.opponentReaction = {
       text: 'Debug reaction',
       ttl,
@@ -1784,6 +2210,34 @@ function cueStickQuatFromDirection(dirx: number, dirz: number): import('../world
   return { x: cx * inv, y: cy * inv, z: cz * inv, w: s * 0.5 };
 }
 
+function tutorialIllegalFirstHitXPolylines(
+  cx: number,
+  cy: number,
+  tw: number,
+  th: number,
+  lineY: number,
+): PolylineObjectState[] {
+  const s = 14;
+  const hex = '#ff2233';
+  const mk = (objectId: string, x0: number, y0: number, x1: number, y1: number): PolylineObjectState => ({
+    objectId,
+    templateId: AssetIds.lineGhostObject,
+    points: [
+      vec3(x0 - tw / 2, lineY, y0 - th / 2),
+      vec3(x1 - tw / 2, lineY, y1 - th / 2),
+    ],
+    colorHex: hex,
+    opacity: 0.92,
+    visible: true,
+    lifetime: 'persistent',
+    replication: 'localCosmetic',
+  });
+  return [
+    mk('tutorial.illegal.x.0', cx - s, cy - s, cx + s, cy + s),
+    mk('tutorial.illegal.x.1', cx - s, cy + s, cx + s, cy - s),
+  ];
+}
+
 function segmentToPolyline(
   objectId: string,
   templateId: string,
@@ -1807,6 +2261,40 @@ function segmentToPolyline(
     visible: true,
     lifetime: 'oneShot',
     replication: 'localCosmetic',
+  };
+}
+
+function contactRingPolyline(
+  objectId: string,
+  templateId: string,
+  cx: number,
+  cy: number,
+  radius: number,
+  y: number,
+  tw: number,
+  th: number,
+  colorHex: string,
+  opacity: number,
+): PolylineObjectState {
+  const points: ReturnType<typeof vec3>[] = [];
+  const steps = 24;
+  const r = Math.max(2, radius * 0.98);
+  for (let i = 0; i <= steps; i++) {
+    const a = (i / steps) * Math.PI * 2;
+    const px = cx + Math.cos(a) * r;
+    const py = cy + Math.sin(a) * r;
+    points.push(vec3(px - tw / 2, y, py - th / 2));
+  }
+  return {
+    objectId,
+    templateId,
+    points,
+    colorHex,
+    opacity,
+    visible: true,
+    lifetime: 'oneShot',
+    replication: 'localCosmetic',
+    lineWidth: 2.1,
   };
 }
 

@@ -173,6 +173,8 @@ export interface HudState {
     };
     /** First-break hint: pulse the right-edge power slider (replaces on-cue “pull back” cue). */
     powerBarHint?: boolean;
+    /** First-run tutorial: pulse power slider + drag cursor until first stroke. */
+    tutorialShootHint?: boolean;
     /** Match-end opponent reaction (Tungo lose face) when the player wins. */
     matchEndOpponentPortrait?: { portraitAssetId: string; text: string } | null;
     /** Transient yellow popup over the table (group assignment / foul / etc.). */

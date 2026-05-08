@@ -7,7 +7,7 @@ export class Ball {
   readonly vel = new Vec2();
   /** Pocketed balls are inactive until re-spot (cue) or removed. */
   active = true;
-  /** English on cue (-1..1); decays during motion. */
+  /** Cue spin state from hit point (continuous local x/y), decays during motion. */
   english = new Vec2();
   /** Visual / rules number: 1-15 for object balls, 0 cue. */
   number: number;

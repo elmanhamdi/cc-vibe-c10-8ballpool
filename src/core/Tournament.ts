@@ -1,4 +1,4 @@
-import type { TournamentTier } from './TournamentCatalog.js';
+import type { TournamentOpponentSlot, TournamentTier } from './TournamentCatalog.js';
 
 /**
  * Tournament run state — runtime only (no persistence in v1).
@@ -13,8 +13,8 @@ export type TournamentStatus = 'active' | 'won' | 'lost';
 export interface TournamentRun {
   /** Catalog id this run belongs to. */
   defId: TournamentTier;
-  /** Resolved opponent ids in match order; length === def.matchCount. */
-  opponents: string[];
+  /** Resolved opponent slots in match order; length === def.matchCount. */
+  opponents: TournamentOpponentSlot[];
   /** Index of the next match to play (0..opponents.length). */
   currentRound: number;
   /** Per-match outcome; pending until played. */
@@ -24,7 +24,7 @@ export interface TournamentRun {
 
 export function createPendingRun(
   defId: TournamentTier,
-  opponents: string[],
+  opponents: TournamentOpponentSlot[],
 ): TournamentRun {
   return {
     defId,

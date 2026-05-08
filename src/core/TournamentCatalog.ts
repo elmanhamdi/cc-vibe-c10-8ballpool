@@ -1,4 +1,4 @@
-import type { AICharacterProfile } from '../ai/types.js';
+import type { AICharacterProfile, DifficultyTier } from '../ai/types.js';
 
 /**
  * Tournament catalog.
@@ -9,6 +9,16 @@ import type { AICharacterProfile } from '../ai/types.js';
  */
 
 export type TournamentTier = 'rookie' | 'pro' | 'elite' | 'grandslam';
+
+export interface TournamentOpponentSlot {
+  id: string;
+  /** Added to career-step scaling output before clamping. */
+  tierOffset?: number;
+  minTier?: DifficultyTier;
+  maxTier?: DifficultyTier;
+  /** If set, bypasses scaling and forces an exact tier. */
+  fixedTier?: DifficultyTier;
+}
 
 export interface TournamentDef {
   id: TournamentTier;
@@ -26,7 +36,7 @@ export interface TournamentDef {
    * Resolves the opponent ids in match order. Implementations may shuffle but
    * must return exactly `matchCount` unique ids drawn from `roster`.
    */
-  pickOpponents: (roster: readonly AICharacterProfile[], rng?: () => number) => string[];
+  pickOpponents: (roster: readonly AICharacterProfile[], rng?: () => number) => TournamentOpponentSlot[];
 }
 
 /** Plain snapshot exposed to the UI (drops the function-shaped `pickOpponents`). */
@@ -107,6 +117,19 @@ function pickFromBucket(
   return shuffle(bucket, rng).slice(0, count);
 }
 
+function slot(
+  id: string,
+  cfg?: Pick<TournamentOpponentSlot, 'tierOffset' | 'minTier' | 'maxTier' | 'fixedTier'>,
+): TournamentOpponentSlot {
+  return {
+    id,
+    tierOffset: cfg?.tierOffset,
+    minTier: cfg?.minTier,
+    maxTier: cfg?.maxTier,
+    fixedTier: cfg?.fixedTier,
+  };
+}
+
 export const TOURNAMENT_CATALOG: readonly TournamentDef[] = [
   {
     id: 'rookie',
@@ -126,15 +149,22 @@ export const TOURNAMENT_CATALOG: readonly TournamentDef[] = [
         const exclude = new Set(chosen.map((o) => o.id));
         chosen = chosen.concat(fillFromBottom(roster, exclude, 3 - chosen.length));
       }
-      return chosen.map((o) => o.id);
+      const ids = chosen.map((o) => o.id);
+      return ids.map((id, idx) =>
+        slot(id, {
+          tierOffset: idx === 0 ? -2 : idx === 1 ? -1 : 0,
+          minTier: 'apprentice',
+          maxTier: 'advanced',
+        }),
+      );
     },
   },
   {
     id: 'pro',
     name: 'Pro Series',
     tagline: 'Balanced gauntlet',
-    blurb: '4 matches, one drawn from every tier band. The classic tournament loop.',
-    matchCount: 4,
+    blurb: '3 matches across the roster bands. A compact classic loop.',
+    matchCount: 3,
     entryFeeCoins: 150,
     championBonusCoins: 300,
     championBonusXp: 250,
@@ -142,17 +172,31 @@ export const TOURNAMENT_CATALOG: readonly TournamentDef[] = [
     accent: 'pro',
     pickOpponents: (roster, rng = Math.random) => {
       const sorted = sortedByAccuracy(roster);
-      if (sorted.length <= 4) return sorted.map((o) => o.id);
-      const buckets = 4;
+      if (sorted.length <= 3) {
+        return sorted.map((o, idx) =>
+          slot(o.id, {
+            tierOffset: idx - 1,
+            minTier: 'beginner',
+            maxTier: 'expert',
+          }),
+        );
+      }
+      const buckets = 3;
       const size = sorted.length / buckets;
-      const out: string[] = [];
+      const out: TournamentOpponentSlot[] = [];
       for (let i = 0; i < buckets; i++) {
         const start = Math.floor(i * size);
         const end = Math.floor((i + 1) * size);
         const bucket = sorted.slice(start, end);
         if (bucket.length === 0) continue;
         const idx = Math.min(bucket.length - 1, Math.floor(rng() * bucket.length));
-        out.push(bucket[idx]!.id);
+        out.push(
+          slot(bucket[idx]!.id, {
+            tierOffset: i - 1,
+            minTier: 'beginner',
+            maxTier: 'expert',
+          }),
+        );
       }
       return out;
     },
@@ -161,8 +205,8 @@ export const TOURNAMENT_CATALOG: readonly TournamentDef[] = [
     id: 'elite',
     name: 'Elite Brawl',
     tagline: 'Skilled to expert',
-    blurb: '4 matches against skilled, advanced and expert opponents. No warm-ups.',
-    matchCount: 4,
+    blurb: '3 tougher matches with no warm-ups.',
+    matchCount: 3,
     entryFeeCoins: 400,
     championBonusCoins: 500,
     championBonusXp: 500,
@@ -170,20 +214,27 @@ export const TOURNAMENT_CATALOG: readonly TournamentDef[] = [
     accent: 'elite',
     pickOpponents: (roster, rng = Math.random) => {
       const slice = bucketSlice(roster, 3, 7);
-      let chosen = pickFromBucket(slice, 4, rng);
-      if (chosen.length < 4) {
+      let chosen = pickFromBucket(slice, 3, rng);
+      if (chosen.length < 3) {
         const exclude = new Set(chosen.map((o) => o.id));
-        chosen = chosen.concat(fillFromBottom(roster, exclude, 4 - chosen.length));
+        chosen = chosen.concat(fillFromBottom(roster, exclude, 3 - chosen.length));
       }
-      return chosen.map((o) => o.id);
+      const ids = chosen.map((o) => o.id);
+      return ids.map((id, idx) =>
+        slot(id, {
+          tierOffset: idx,
+          minTier: 'intermediate',
+          maxTier: 'master',
+        }),
+      );
     },
   },
   {
     id: 'grandslam',
     name: 'Grand Slam',
     tagline: 'The masters tour',
-    blurb: 'Four ascending matches that culminate against the master. Survive all four for the grand prize.',
-    matchCount: 4,
+    blurb: 'Three ascending matches ending in the toughest duel. Win all three for the grand prize.',
+    matchCount: 3,
     entryFeeCoins: 1000,
     championBonusCoins: 1000,
     championBonusXp: 1000,
@@ -193,11 +244,18 @@ export const TOURNAMENT_CATALOG: readonly TournamentDef[] = [
       /** Fixed escalating slope so M4 is always the master/expert end of the roster. */
       const slice = bucketSlice(roster, 4, 8);
       let chosen = slice;
-      if (chosen.length < 4) {
+      if (chosen.length < 3) {
         const exclude = new Set(chosen.map((o) => o.id));
-        chosen = chosen.concat(fillFromBottom(roster, exclude, 4 - chosen.length));
+        chosen = chosen.concat(fillFromBottom(roster, exclude, 3 - chosen.length));
       }
-      return chosen.map((o) => o.id);
+      const ids = chosen.map((o) => o.id);
+      return ids.map((id, idx) =>
+        slot(id, {
+          tierOffset: idx + 1,
+          minTier: 'advanced',
+          maxTier: 'master',
+        }),
+      );
     },
   },
 ];

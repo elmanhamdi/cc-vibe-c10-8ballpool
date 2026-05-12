@@ -1950,7 +1950,7 @@ body {
 /* First-run tutorial: drag cue along the power groove */
 .hud-tutorial-power-drag {
   position: absolute;
-  left: calc(100% + 8px);
+  left: calc(100% + 8px - 40px);
   top: 22%;
   width: 44px;
   height: 44px;

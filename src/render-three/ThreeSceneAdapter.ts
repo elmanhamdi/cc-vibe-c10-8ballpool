@@ -133,7 +133,8 @@ export class ThreeSceneAdapter {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.02;
+    /** Karanlık sahnede okunabilirlik: exposure ve fill ışıkları orijinalin üzerinde. */
+    this.renderer.toneMappingExposure = 1.12;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -1085,11 +1086,11 @@ export class ThreeSceneAdapter {
   private buildLights(): void {
     const t = this.physicsTable;
     const span = Math.max(t.width, t.height) * 0.42 + 48;
-    const amb = new THREE.AmbientLight(0xffffff, 0.16);
+    const amb = new THREE.AmbientLight(0xffffff, 0.22);
     this.scene.add(amb);
-    const hemi = new THREE.HemisphereLight(0xc8e2ff, 0x4a3828, 0.24);
+    const hemi = new THREE.HemisphereLight(0xc8e2ff, 0x4a3828, 0.3);
     this.scene.add(hemi);
-    const rightKey = new THREE.DirectionalLight(0xfff3e2, 0.52);
+    const rightKey = new THREE.DirectionalLight(0xfff3e2, 0.58);
     rightKey.position.set(260, 500, 80);
     rightKey.castShadow = true;
     rightKey.shadow.mapSize.set(2048, 2048);
@@ -1103,7 +1104,7 @@ export class ThreeSceneAdapter {
     rightKey.shadow.camera.bottom = -span;
     this.scene.add(rightKey);
 
-    const leftKey = new THREE.DirectionalLight(0xd3e6ff, 0.62);
+    const leftKey = new THREE.DirectionalLight(0xd3e6ff, 0.7);
     leftKey.position.set(-320, 520, 120);
     leftKey.castShadow = true;
     leftKey.shadow.mapSize.set(2048, 2048);

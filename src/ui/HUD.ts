@@ -670,7 +670,7 @@ export class HUD {
     tutImg.className = 'hud-tutorial-power-drag-img';
     tutImg.alt = '';
     tutImg.decoding = 'async';
-    tutImg.src = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/tutorial_power_cursor.png');
+    tutImg.src = new URL('./hand-cursor-tap.png', import.meta.url).href;
     tutImg.addEventListener(
       'error',
       () => {
@@ -1268,7 +1268,8 @@ export class HUD {
 
     const inMatch = phase !== 'MainMenu';
     this.topStack.style.display = inMatch ? 'flex' : 'none';
-    this.bubble.style.display = inMatch ? 'block' : 'none';
+    /** Üst-sol diyalog balonu kapalı — sadece metinli mini karakter satırları. */
+    this.bubble.style.display = 'none';
 
     if (!inMatch) {
       this.oppReaction.classList.remove('show');
@@ -1369,16 +1370,9 @@ export class HUD {
         portrait.style.backgroundImage = '';
       }
       this.oppReaction.classList.remove('show');
-      const hasDialogue = typeof eb.dialogueText === 'string' && eb.dialogueText.trim().length > 0;
-      if (hasDialogue) {
-        bubbleText.textContent = eb.dialogueText!;
-        this.bubble.classList.add('show');
-        this.bubble.style.display = 'block';
-      } else {
-        bubbleText.textContent = '';
-        this.bubble.classList.remove('show');
-        this.bubble.style.display = 'none';
-      }
+      bubbleText.textContent = '';
+      this.bubble.classList.remove('show');
+      this.bubble.style.display = 'none';
     }
 
     const dot = this.topStack.querySelector('#spin-dot') as HTMLElement;

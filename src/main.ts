@@ -12,15 +12,17 @@ import { PhysicsDebugToggle } from './platform-browser/PhysicsDebugToggle.js';
 import { CameraDebugToggle } from './platform-browser/CameraDebugToggle.js';
 import { TableMeshDebugToggle } from './platform-browser/TableMeshDebugToggle.js';
 import { OpponentShotCameraToggle } from './platform-browser/OpponentShotCameraToggle.js';
+import { BrowserStorageAdapter } from './platform-browser/BrowserStorageAdapter.js';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game-canvas')!;
 const hudLayer = document.querySelector<HTMLElement>('#hud-layer')!;
 const gameRoot = document.querySelector<HTMLElement>('#game-root')!;
 
+const storage = new BrowserStorageAdapter();
 const commandBuffer: GameInputCommand[] = [];
-const tableLayout = resolveTableLayoutFromBrowser();
+const tableLayout = resolveTableLayoutFromBrowser({ storage });
 const sharedTable = new Table(tableLayout);
-const engine = new GameEngine({ table: sharedTable, ballRadius: 8.1 });
+const engine = new GameEngine({ table: sharedTable, ballRadius: 8.1, storage });
 const assetBaseUrl = import.meta.env.BASE_URL;
 const sceneAdapter = new ThreeSceneAdapter(canvas, { assetBaseUrl, physicsTable: sharedTable });
 const audioAdapter = new BrowserAudioAdapter({ assetBaseUrl });
@@ -66,6 +68,7 @@ const hudAdapter = new BrowserHudAdapter(
     playUiClick: () => {
       audioAdapter.playSoundEffect(AssetIds.soundUiClick, 0.55);
     },
+    storage,
   },
 );
 hudAdapter.bind();

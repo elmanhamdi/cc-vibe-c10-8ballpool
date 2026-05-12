@@ -1,5 +1,6 @@
 import type { GameEngine } from '../core/GameEngine.js';
 import type { GameInputCommand } from '../core/gameContract.js';
+import type { StorageAdapter } from '../core/StorageAdapter.js';
 import { HUD } from '../ui/HUD.js';
 
 export type BrowserHudAdapterOptions = {
@@ -11,6 +12,8 @@ export type BrowserHudAdapterOptions = {
   isSoundMuted?: () => boolean;
   /** Short UI click SFX for HUD buttons (mute-aware via HUD). */
   playUiClick?: () => void;
+  /** Persistence adapter (localStorage in browser; injected for portability). */
+  storage?: StorageAdapter;
 };
 
 /** Binds DOM HUD to `HudState` and routes chrome actions to input commands. */
@@ -28,6 +31,7 @@ export class BrowserHudAdapter {
       toggleSound: options?.toggleSound,
       isSoundMuted: options?.isSoundMuted,
       playUiClick: options?.playUiClick,
+      storage: options?.storage,
     });
   }
 

@@ -1,6 +1,0 @@
-Tungo (Tungo Biliardo) — Vite serves from /opponents/tungo/...
-
-hud/        — Top bar opponent portrait: avatar.png
-reactions/  — Full-screen reaction JPGs (see AssetManifest)
-audio/      — Taunt VO: tung1.ogg, tung2.ogg, tung3.ogg
-model/      — 3D idle behind table: Tungo_Idle.fbx (replace with Tungo mesh when ready)

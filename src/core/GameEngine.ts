@@ -12,7 +12,7 @@ import {
   type TurnResolution,
 } from '../gameplay/RulesEngine.js';
 import { AIController, type AIShotPlan } from '../ai/AIController.js';
-import { CAREER_OPPONENTS } from '../ai/AICharacters.js';
+import { CAREER_OPPONENTS, getOpponentDialogueBehavior } from '../ai/AICharacters.js';
 import { evaluateDirectShot, ownTargetsFor, type AIWorldView as EvaluatorWorldView } from '../ai/ShotEvaluator.js';
 import { tierParams } from '../ai/DifficultyProfiles.js';
 import {
@@ -23,7 +23,7 @@ import {
   randomTimeReactionKind,
   type PortraitReactionKind,
 } from '../opponents/opponentPortraitReactions.js';
-import type { AICharacterProfile, DifficultyTier } from '../ai/types.js';
+import type { AICharacterProfile, DifficultyTier, OpponentDialogueBehavior } from '../ai/types.js';
 import { DialogueManager } from '../systems/DialogueManager.js';
 import type { DialogueCategory } from '../systems/dialogueLines.js';
 import { computeAimPreview, findFirstRayHitBall } from '../gameplay/AimPreview.js';
@@ -62,6 +62,8 @@ import {
   OPPONENT_TUNG_PLACEHOLDER_OFFSET_X,
   OPPONENT_TUNG_PLACEHOLDER_PAST_RAIL_Z,
   OPPONENT_TUNG_WORLD_Y_OFFSET,
+  PLAYER_SHOT_CLOCK_SEC,
+  AI_THINK_MAX_SEC,
 } from './Constants.js';
 import { PoolInputState } from './PoolInputState.js';
 import { transformAt, uniformScale, vec3 } from '../world/Transform.js';
@@ -84,6 +86,7 @@ import {
   listTournamentViews,
 } from './TournamentCatalog.js';
 import { Vec2 } from '../physics/Vec2.js';
+import { MemoryStorageAdapter, type StorageAdapter } from './StorageAdapter.js';
 
 const PROFILE_STORAGE_KEY = 'vertical-eight-ball.profile.v1';
 const TUTORIAL_STORAGE_KEY = 'vertical-eight-ball.tutorial.v1.completed';
@@ -107,71 +110,6 @@ function tierFromIndex(index: number): DifficultyTier {
   return DIFFICULTY_TIER_ORDER[i]!;
 }
 
-type OpponentDialogueBehavior = {
-  silenceChance: number;
-  tauntChance: number;
-  praiseChance: number;
-  aiGoodShotChance: number;
-  timeoutReactionChance: number;
-  noBallHitReactionChance: number;
-  foulReactionChance: number;
-  missReactionChance: number;
-};
-
-const DEFAULT_DIALOGUE_BEHAVIOR: OpponentDialogueBehavior = {
-  silenceChance: 0.16,
-  tauntChance: 0.5,
-  praiseChance: 0.3,
-  aiGoodShotChance: 0.42,
-  timeoutReactionChance: 0.7,
-  noBallHitReactionChance: 0.58,
-  foulReactionChance: 0.34,
-  missReactionChance: 0.34,
-};
-
-const DIALOGUE_BEHAVIOR_BY_OPPONENT_ID: Record<string, OpponentDialogueBehavior> = {
-  tungo: {
-    silenceChance: 0.07,
-    tauntChance: 0.76,
-    praiseChance: 0.2,
-    aiGoodShotChance: 0.68,
-    timeoutReactionChance: 0.9,
-    noBallHitReactionChance: 0.82,
-    foulReactionChance: 0.52,
-    missReactionChance: 0.56,
-  },
-  torta_tartaruga: {
-    silenceChance: 0.2,
-    tauntChance: 0.35,
-    praiseChance: 0.52,
-    aiGoodShotChance: 0.38,
-    timeoutReactionChance: 0.62,
-    noBallHitReactionChance: 0.5,
-    foulReactionChance: 0.25,
-    missReactionChance: 0.22,
-  },
-  gattotto_otto: {
-    silenceChance: 0.14,
-    tauntChance: 0.44,
-    praiseChance: 0.58,
-    aiGoodShotChance: 0.34,
-    timeoutReactionChance: 0.7,
-    noBallHitReactionChance: 0.6,
-    foulReactionChance: 0.28,
-    missReactionChance: 0.3,
-  },
-};
-
-function readTutorialCompleted(): boolean {
-  if (typeof localStorage === 'undefined') return true;
-  return localStorage.getItem(TUTORIAL_STORAGE_KEY) === '1';
-}
-
-function writeTutorialCompleted(): void {
-  if (typeof localStorage === 'undefined') return;
-  localStorage.setItem(TUTORIAL_STORAGE_KEY, '1');
-}
-
 /** Shortest-path lerp on the circle (radians). */
 function lerpAngleRad(from: number, to: number, t: number): number {
   const twoPi = Math.PI * 2;
@@ -185,10 +123,12 @@ export type { PotHudState } from '../world/renderTypes.js';
 export type GameEngineOptions = {
   table?: Table;
   ballRadius?: number;
+  storage?: StorageAdapter;
 };
 
 export class GameEngine implements Game {
   phase: GamePhase = 'MainMenu';
+  private readonly storage: StorageAdapter;
   readonly table: Table;
   readonly physics: CollisionSystem;
   readonly rulesCtx: RulesContext = {
@@ -196,7 +136,10 @@ export class GameEngine implements Game {
     playerGroup: null,
     aiGroup: null,
   };
-  readonly turnClock = new TurnManager({ playerSeconds: 16, aiSeconds: 22 });
+  readonly turnClock = new TurnManager({
+    playerSeconds: PLAYER_SHOT_CLOCK_SEC,
+    aiSeconds: AI_THINK_MAX_SEC,
+  });
   ai: AIController;
   readonly dialogue = new DialogueManager();
 
@@ -280,19 +223,29 @@ export class GameEngine implements Game {
   readonly poolInput = new PoolInputState();
   private readonly eventQueue: GameEvent[] = [];
 
+  private readTutorialCompleted(): boolean {
+    const raw = this.storage.getItem(TUTORIAL_STORAGE_KEY);
+    return raw === '1';
+  }
+
+  private writeTutorialCompleted(): void {
+    this.storage.setItem(TUTORIAL_STORAGE_KEY, '1');
+  }
+
   private resetPlayerSpin(): void {
     this.spinX = 0;
     this.spinY = 0;
   }
 
   constructor(options?: GameEngineOptions) {
+    this.storage = options?.storage ?? new MemoryStorageAdapter();
     const ballRadius = options?.ballRadius ?? 8.1;
     this.table = options?.table ?? new Table();
     this.physics = new CollisionSystem(this.table, ballRadius);
     this.ai = new AIController(CAREER_OPPONENTS[0]!);
     this.profile = this.loadProfileFromStorage();
     this.ensureEquippedStats();
-    if (!readTutorialCompleted()) {
+    if (!this.readTutorialCompleted()) {
       this.beginTutorialMatch();
     } else {
       /**
@@ -331,8 +284,7 @@ export class GameEngine implements Game {
 
   private loadProfileFromStorage(): PlayerProfile {
     try {
-      if (typeof localStorage === 'undefined') return defaultProfile();
-      const raw = localStorage.getItem(PROFILE_STORAGE_KEY);
+      const raw = this.storage.getItem(PROFILE_STORAGE_KEY);
       if (!raw) return defaultProfile();
       const parsed = JSON.parse(raw) as unknown;
       return hydrateProfile(parsed);
@@ -343,8 +295,7 @@ export class GameEngine implements Game {
 
   private saveProfileToStorage(): void {
     try {
-      if (typeof localStorage === 'undefined') return;
-      localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(this.profile));
+      this.storage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(this.profile));
     } catch {
       /* ignore */
     }
@@ -1139,7 +1090,7 @@ export class GameEngine implements Game {
       });
       this.pendingAI = plan;
       this.aiAimDisplayStart = plan.angle + (Math.random() - 0.5) * 0.52;
-      const thinkSec = plan.thinkMs / 1000;
+      const thinkSec = Math.min(AI_THINK_MAX_SEC, plan.thinkMs / 1000);
       this.aiThinkTotal = Math.max(0.001, thinkSec);
       this.aiThink = thinkSec;
       this.aiCameraBlendTarget =
@@ -1338,7 +1289,7 @@ export class GameEngine implements Game {
 
   private maybeTaunt(res: TurnResolution, shooter: PlayerId, shot?: ShotOutcome): void {
     const opp = this.getOpponent();
-    const behavior = this.getOpponentDialogueBehavior(opp);
+    const behavior = getOpponentDialogueBehavior(opp.id);
 
     if (res.playerWon || res.playerLost) return;
 
@@ -1388,10 +1339,6 @@ export class GameEngine implements Game {
     ) {
       void this.tryDialogue('ai_good_shot', opp, behavior.silenceChance);
     }
-  }
-
-  private getOpponentDialogueBehavior(opp: AICharacterProfile): OpponentDialogueBehavior {
-    return DIALOGUE_BEHAVIOR_BY_OPPONENT_ID[opp.id] ?? DEFAULT_DIALOGUE_BEHAVIOR;
   }
 
   private countActiveTableBallsExcludingCue(): number {
@@ -2090,7 +2037,7 @@ export class GameEngine implements Game {
     for (const c of commands) {
       if (c.type === 'menu.restart') {
         if (this.tutorialActive) {
-          writeTutorialCompleted();
+          this.writeTutorialCompleted();
           this.tutorialActive = false;
           this.tutorialShootHint = false;
         }
@@ -2098,7 +2045,7 @@ export class GameEngine implements Game {
         this.beginCareer(this.levelIndex);
       } else if (c.type === 'menu.next') {
         if (this.tutorialActive) {
-          writeTutorialCompleted();
+          this.writeTutorialCompleted();
           this.tutorialActive = false;
           this.tutorialShootHint = false;
         }
@@ -2110,7 +2057,7 @@ export class GameEngine implements Game {
         this.beginCareer(this.levelIndex);
       } else if (c.type === 'menu.home') {
         if (this.tutorialActive) {
-          writeTutorialCompleted();
+          this.writeTutorialCompleted();
           this.tutorialActive = false;
           this.tutorialShootHint = false;
         }

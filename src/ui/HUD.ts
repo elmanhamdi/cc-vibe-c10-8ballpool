@@ -6,6 +6,7 @@ import { AssetIds } from '../assets/AssetIds.js';
 import { resolveBrowserAssetUrl } from '../assets/resolveBrowserAssetUrl.js';
 import { XP_REWARD_WIN } from '../core/AccountLevel.js';
 import { SHOP_CUE_CATALOG } from '../core/ShopCatalog.js';
+import type { StorageAdapter } from '../core/StorageAdapter.js';
 import { evaluateAchievements } from './AchievementsCatalog.js';
 import { getLeaderboard } from './LeaderboardData.js';
 
@@ -178,6 +179,7 @@ export class HUD {
   private readonly spinPopupReset: HTMLButtonElement;
   private lastSpinPadTapMs = 0;
   private lastSpinPadTapLen = 10;
+  private readonly storage: StorageAdapter | null;
 
   constructor(
     root: HTMLElement,
@@ -188,9 +190,11 @@ export class HUD {
       toggleSound?: () => boolean;
       isSoundMuted?: () => boolean;
       playUiClick?: () => void;
+      storage?: StorageAdapter;
     },
   ) {
     this.root = root;
+    this.storage = opts?.storage ?? null;
     this.gameRoot = root.parentElement?.id === 'game-root' ? root.parentElement : null;
     root.innerHTML = '';
 
@@ -677,8 +681,8 @@ export class HUD {
     this.tutorialPowerDrag.append(tutImg);
     powerInner.append(this.tutorialPowerDrag);
 
-    /** Menu background — Tungo lounge art under the hub. */
-    const menuBgUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/bg.png');
+    /** Menu background — lounge art under the hub (`public/ui/bg.jpg`). */
+    const menuBgUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/bg.jpg');
     this.menu.style.setProperty('--menu-bg-image', `url("${menuBgUrl}")`);
 
     /** Hero logo — full "8 Balls Pool vs Brainrots" lockup over the menu hub. */
@@ -696,6 +700,9 @@ export class HUD {
     /** Play button — yellow pill art with built-in play arrow. */
     const btnPlayUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/button_play.png');
     this.menu.style.setProperty('--menu-play-image', `url("${btnPlayUrl}")`);
+
+    const menuCoinIconUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/money.png');
+    this.menu.style.setProperty('--menu-coin-icon-image', `url("${menuCoinIconUrl}")`);
 
     root.append(
       this.menu,
@@ -1631,7 +1638,7 @@ export class HUD {
       this.leaderboardList.innerHTML = '';
       return;
     }
-    const entries = getLeaderboard('You', profile.xp);
+    const entries = getLeaderboard('You', profile.xp, this.storage ?? undefined);
     this.leaderboardList.innerHTML = entries
       .map((e) => {
         const rankCls =

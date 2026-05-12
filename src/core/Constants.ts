@@ -71,6 +71,11 @@ export const OPENING_BREAK_CAMERA_BLEND_RETURN_EXP = 1.05;
 export const OPPONENT_REACTION_TTL_MIN_SEC = 2.5;
 export const OPPONENT_REACTION_TTL_RANDOM_SEC = 0;
 
+/** Shot clock: oyuncu turu süresi (HUD halkası / zaman aşımı). */
+export const PLAYER_SHOT_CLOCK_SEC = 40;
+/** Rakip turunda `thinkMs` tavanı (saniye); halka ve bekleme en fazla bu kadar. */
+export const AI_THINK_MAX_SEC = 10;
+
 /** Tung 3D: üst (-Z) rail’in biraz gerisi (dünya Z); Y = felt + `OPPONENT_TUNG_WORLD_Y_OFFSET`. */
 export const OPPONENT_TUNG_PLACEHOLDER_PAST_RAIL_Z = 44;
 export const OPPONENT_TUNG_PLACEHOLDER_OFFSET_X = 0;

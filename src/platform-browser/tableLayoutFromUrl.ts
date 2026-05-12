@@ -5,6 +5,7 @@ import {
   tableLayoutFromJson,
   type TableLayoutConfig,
 } from '../physics/tableLayoutConfig.js';
+import type { StorageAdapter } from '../core/StorageAdapter.js';
 
 const STORAGE_KEY = 'poolTableLayoutJson';
 const URL_PREFIX = 'tl_';
@@ -24,21 +25,48 @@ export function partialTableLayoutFromUrl(search: string): Partial<TableLayoutCo
   return partial;
 }
 
+export type ResolveTableLayoutOptions = {
+  storage?: StorageAdapter;
+  /** Raw search string such as `'?tl_key=value'`; defaults to `window.location.search` if present. */
+  search?: string;
+};
+
 /**
- * Default layout merged with `localStorage` JSON, then URL `tl_*` overrides (URL wins).
- * Safe to call outside browser (returns defaults only if `window` missing).
+ * Default layout merged with injected storage JSON, then URL `tl_*` overrides (URL wins).
+ * Safe to call outside browser (returns defaults only if `window` and storage missing).
  */
-export function resolveTableLayoutFromBrowser(): TableLayoutConfig {
+export function resolveTableLayoutFromBrowser(options?: ResolveTableLayoutOptions): TableLayoutConfig {
   let merged = { ...DEFAULT_TABLE_LAYOUT };
-  if (typeof window !== 'undefined') {
+  const storage = options?.storage;
+  const search =
+    options?.search ?? (typeof window !== 'undefined' && typeof window.location !== 'undefined'
+      ? window.location.search
+      : '');
+
+  const rawFromStorage = (() => {
+    if (storage) return storage.getItem(STORAGE_KEY);
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        return window.localStorage.getItem(STORAGE_KEY);
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  })();
+
+  if (rawFromStorage) {
     try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (raw) merged = mergeTableLayout(merged, tableLayoutFromJson(JSON.parse(raw) as unknown));
+      merged = mergeTableLayout(merged, tableLayoutFromJson(JSON.parse(rawFromStorage) as unknown));
     } catch {
       /* ignore bad JSON */
     }
-    merged = mergeTableLayout(merged, partialTableLayoutFromUrl(window.location.search));
   }
+
+  if (search) {
+    merged = mergeTableLayout(merged, partialTableLayoutFromUrl(search));
+  }
+
   return merged;
 }
 

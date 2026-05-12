@@ -23,3 +23,24 @@ export interface AICharacterProfile {
   /** Cue id from shared catalog. */
   cueId?: string;
 }
+
+/**
+ * Opponent's non-physics behavior in moment-to-moment match flow.
+ * Keep this data-driven so new characters can be added without engine edits.
+ */
+export interface OpponentDialogueBehavior {
+  silenceChance: number;
+  tauntChance: number;
+  praiseChance: number;
+  aiGoodShotChance: number;
+  timeoutReactionChance: number;
+  noBallHitReactionChance: number;
+  foulReactionChance: number;
+  missReactionChance: number;
+}
+
+/** Single-source character record for quick future additions. */
+export interface AICharacterDefinition {
+  profile: AICharacterProfile;
+  behavior?: Partial<OpponentDialogueBehavior>;
+}

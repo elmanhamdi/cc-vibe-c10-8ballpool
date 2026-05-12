@@ -1,14 +1,16 @@
 import { accountFromXp } from '../core/AccountLevel.js';
+import { MemoryStorageAdapter, type StorageAdapter } from '../core/StorageAdapter.js';
 
 /**
  * Placeholder XP-focused leaderboard. There is no real online matchmaking yet,
  * so we generate a deterministic snapshot of fake players the first time the
- * board is opened, persist it to `localStorage`, and slot the player in based
- * on their live XP. This way "Online" eventually replacing this module needs
- * only the data source to change.
+ * board is opened, persist it via the injected storage adapter, and slot the
+ * player in based on their live XP. This way "Online" eventually replacing this
+ * module needs only the data source to change.
  */
 
 const LB_STORAGE_KEY = 'vertical-eight-ball.leaderboard.v1';
+const FALLBACK_STORAGE = new MemoryStorageAdapter();
 
 interface FakeEntrySeed {
   name: string;
@@ -57,10 +59,9 @@ export interface LeaderboardEntry {
   isPlayer: boolean;
 }
 
-function loadPersisted(): PersistedSnapshot | null {
+function loadPersisted(storage: StorageAdapter): PersistedSnapshot | null {
   try {
-    if (typeof localStorage === 'undefined') return null;
-    const raw = localStorage.getItem(LB_STORAGE_KEY);
+    const raw = storage.getItem(LB_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as unknown;
     if (
@@ -78,10 +79,9 @@ function loadPersisted(): PersistedSnapshot | null {
   }
 }
 
-function savePersisted(snap: PersistedSnapshot): void {
+function savePersisted(storage: StorageAdapter, snap: PersistedSnapshot): void {
   try {
-    if (typeof localStorage === 'undefined') return;
-    localStorage.setItem(LB_STORAGE_KEY, JSON.stringify(snap));
+    storage.setItem(LB_STORAGE_KEY, JSON.stringify(snap));
   } catch {
     /* ignore */
   }
@@ -102,11 +102,12 @@ function buildSnapshotFromSeeds(): PersistedSnapshot {
 export function getLeaderboard(
   playerName: string,
   playerXp: number,
+  storage: StorageAdapter = FALLBACK_STORAGE,
 ): LeaderboardEntry[] {
-  let snap = loadPersisted();
+  let snap = loadPersisted(storage);
   if (!snap) {
     snap = buildSnapshotFromSeeds();
-    savePersisted(snap);
+    savePersisted(storage, snap);
   }
   const fakes: LeaderboardEntry[] = snap.entries.map((e) => ({
     rank: 0,

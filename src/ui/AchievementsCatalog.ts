@@ -107,11 +107,11 @@ export const ACHIEVEMENTS: readonly AchievementDef[] = [
   {
     id: 'cue-connoisseur',
     name: 'Cue Connoisseur',
-    desc: 'Own all 6 cues in the shop.',
+    desc: 'Own all cues in the shop.',
     iconKind: 'cue',
     rewardLabel: '+200 XP',
-    unlocked: (p) => p.ownedCueIds.length >= 6,
-    progress01: (p) => pct(p.ownedCueIds.length, 6),
+    unlocked: (p) => p.ownedCueIds.length >= 4,
+    progress01: (p) => pct(p.ownedCueIds.length, 4),
   },
   {
     id: 'brainrot-slayer',

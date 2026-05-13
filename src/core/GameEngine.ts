@@ -88,7 +88,7 @@ import {
 import { Vec2 } from '../physics/Vec2.js';
 import { MemoryStorageAdapter, type StorageAdapter } from './StorageAdapter.js';
 
-const PROFILE_STORAGE_KEY = 'vertical-eight-ball.profile.v1';
+const PROFILE_STORAGE_KEY = 'vertical-eight-ball.profile.v2';
 const TUTORIAL_STORAGE_KEY = 'vertical-eight-ball.tutorial.v1.completed';
 const DIFFICULTY_TIER_ORDER: readonly DifficultyTier[] = [
   'apprentice',
@@ -1593,10 +1593,7 @@ export class GameEngine implements Game {
         pot,
         potTargetLabelOpponent: potTargets.opponent,
         potTargetLabelPlayer: potTargets.player,
-        showPotProgressStrip:
-          !meta.groups.openTable &&
-          meta.groups.playerGroup != null &&
-          meta.groups.aiGroup != null,
+        showPotProgressStrip: snap.phase !== 'MainMenu' && snap.phase !== 'MatchEnd',
         eightPocketed,
         rulesOpenTable: meta.groups.openTable,
         playerGroup: meta.groups.playerGroup,

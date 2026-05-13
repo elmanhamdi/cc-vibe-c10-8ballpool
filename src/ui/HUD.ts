@@ -12,9 +12,6 @@ import { getLeaderboard } from './LeaderboardData.js';
 
 const SOUND_ICON_ON_URL = new URL('./sound.png', import.meta.url).href;
 const SOUND_ICON_OFF_URL = new URL('./sound_off.png', import.meta.url).href;
-const SOLID_BALL_ICON_URL = new URL('./SolidBall.png', import.meta.url).href;
-const STRIPE_BALL_ICON_URL = new URL('./StripeBall.png', import.meta.url).href;
-
 function opponentHudAvatarUrl(assetBaseUrl: string, opponentId: string): string {
   if (opponentId === 'tungo') {
     const e = AssetManifest['ui.opponent.tungo.avatar'];
@@ -101,9 +98,12 @@ export class HUD {
   private readonly modeSelectTrack: HTMLElement;
   private readonly modeSelectDots: HTMLElement;
   private readonly modeSelectBackBtn: HTMLButtonElement;
+  private readonly modeSelectTitleEl: HTMLElement;
   private modeSelectVisible = false;
   /** Pointer-drag state: latches true while a drag exceeds the click threshold so the next click is suppressed. */
   private modeSelectSuppressClick = false;
+  /** Last-opened mode-select slice (casual-only vs tournament catalog). */
+  private modeSelectFilter: 'casual' | 'tournaments' = 'casual';
   /** Active card index (0..4) used to highlight the dot indicators. */
   private modeSelectActiveIdx = 0;
   /**
@@ -115,9 +115,10 @@ export class HUD {
   private modeSelectLastRenderKey: string | null = null;
   private readonly tournamentOverlay: HTMLElement;
   private readonly tournamentSlots: HTMLElement;
-  private readonly tournamentTitle: HTMLElement;
-  private readonly tournamentSub: HTMLElement;
+  private readonly tournamentCupImg: HTMLImageElement;
+  private readonly tournamentTitleRow: HTMLElement;
   private readonly tournamentStartBtn: HTMLButtonElement;
+  private readonly tournamentStartLabel: HTMLElement;
   private readonly tournamentExitBtn: HTMLButtonElement;
   private tournamentVisible = false;
   /** Top-of-match strip showing tournament name + bracket dots + counter. */
@@ -144,6 +145,7 @@ export class HUD {
   private readonly menuCoinAmount: HTMLElement;
   private readonly menuPlayLabel: HTMLElement;
   private readonly menuPlayBtn: HTMLButtonElement;
+  private readonly menuTournamentsBtn: HTMLButtonElement;
   private readonly menuLeaderboardBtn: HTMLButtonElement;
   private readonly menuShopBtn: HTMLButtonElement;
   private readonly menuAchievementsBtn: HTMLButtonElement;
@@ -223,10 +225,15 @@ export class HUD {
         <div class="menu-hero-logo" role="img" aria-label="8 Balls Pool vs Brainrots"></div>
       </div>
       <div class="menu-actions">
-        <button id="menu-btn-play" class="menu-play-btn interactive" aria-label="Play vs Brainrots">
-          <span class="menu-play-glyph" aria-hidden="true"></span>
-          <span class="menu-play-label" id="menu-play-label">Play</span>
-        </button>
+        <div class="menu-primary-btns">
+          <button id="menu-btn-play" class="menu-play-btn interactive" aria-label="Casual — pick a quick match">
+            <span class="menu-play-glyph" aria-hidden="true"></span>
+            <span class="menu-play-label" id="menu-play-label">Play</span>
+          </button>
+          <button id="menu-btn-tournaments" class="menu-tournaments-btn interactive" aria-label="Tournaments">
+            <span class="menu-tournaments-glyph" aria-hidden="true"></span>
+          </button>
+        </div>
         <div class="menu-circle-row">
           <button class="menu-circle-btn interactive" id="menu-circle-leaderboard" aria-label="Leaderboard">
             <span class="menu-circle-icon menu-icon-trophy" aria-hidden="true"></span>
@@ -252,23 +259,37 @@ export class HUD {
         <div class="hud-top-main">
           <div class="hud-side hud-side-ai">
             <div class="hud-ident-block">
-              <div class="hud-ident-row">
-                <div class="avatar-frame interactive" id="ai-avatar-frame" aria-hidden="true">
-                  <div class="avatar-inner">
-                    <img id="ai-avatar-img" class="avatar-photo" src="${resolveBrowserAssetUrl(this.assetBaseUrl, AssetManifest['ui.avatar.genericOpponent'].browserUrl)}" alt="" decoding="async" />
-                  </div>
-                </div>
+              <div class="hud-ident-row hud-ident-row--meta">
                 <div class="hud-side-text hud-ident-text">
                   <div class="side-line">
                     <span id="opp-name" class="side-name">—</span>
                     <span id="opp-lvl" class="lvl-star lvl-star-ai" aria-label="Opponent level">1</span>
                   </div>
-                  <div id="opp-tier" class="side-meta">—</div>
                 </div>
+              </div>
+              <div class="hud-pot-below-name" aria-hidden="true">
+                <div id="pot-chips-left" class="pot-chips pot-chips--under-name pot-chips-end"></div>
               </div>
             </div>
           </div>
           <div class="hud-center-col">
+            <div class="hud-match-duel">
+              <div class="hud-duel-side hud-duel-side--ai">
+                <div class="avatar-frame interactive" id="ai-avatar-frame" aria-hidden="true">
+                  <div class="avatar-inner">
+                    <img id="ai-avatar-img" class="avatar-photo" src="${resolveBrowserAssetUrl(this.assetBaseUrl, AssetManifest['ui.avatar.genericOpponent'].browserUrl)}" alt="" decoding="async" />
+                  </div>
+                </div>
+              </div>
+              <img class="hud-vs-flare" src="${new URL('./vs.png', import.meta.url).href}" alt="" decoding="async" draggable="false" />
+              <div class="hud-duel-side hud-duel-side--pl">
+                <div class="avatar-frame interactive" id="pl-avatar-frame" aria-hidden="true">
+                  <div class="avatar-inner">
+                    <img id="pl-avatar-img" class="avatar-photo" src="${resolveBrowserAssetUrl(this.assetBaseUrl, AssetManifest['ui.avatar.player'].browserUrl)}" alt="" decoding="async" />
+                  </div>
+                </div>
+              </div>
+            </div>
             <div class="spin spin-top spin-center spin-top-wrap" id="spin-top-wrap">
               <button
                 type="button"
@@ -284,34 +305,17 @@ export class HUD {
           </div>
           <div class="hud-side hud-side-player">
             <div class="hud-ident-block hud-ident-block--end">
-              <div class="hud-ident-row">
-                <div class="hud-side-text hud-side-text-right hud-ident-text">
+              <div class="hud-ident-row hud-ident-row--meta">
+                <div class="hud-side-text hud-ident-text">
                   <div class="side-line side-line-end">
                     <span id="pl-name" class="side-name">You</span>
                     <span id="pl-lvl" class="lvl-star" aria-label="Level">1</span>
                   </div>
                 </div>
-                <div class="avatar-frame interactive" id="pl-avatar-frame" aria-hidden="true">
-                  <div class="avatar-inner">
-                    <img id="pl-avatar-img" class="avatar-photo" src="${resolveBrowserAssetUrl(this.assetBaseUrl, AssetManifest['ui.avatar.player'].browserUrl)}" alt="" decoding="async" />
-                  </div>
-                </div>
               </div>
-            </div>
-          </div>
-        </div>
-        <div class="hud-top-pots" id="hud-top-pots">
-          <div class="hud-pot-wrap hud-pot-wrap--ai">
-            <div class="pot-under">
-              <div class="pot-label" id="pot-label-left"></div>
-              <div id="pot-chips-left" class="pot-chips"></div>
-            </div>
-          </div>
-          <div class="hud-pot-wrap hud-pot-wrap--spacer" aria-hidden="true"></div>
-          <div class="hud-pot-wrap hud-pot-wrap--pl">
-            <div class="pot-under pot-under-end">
-              <div class="pot-label pot-label-end" id="pot-label-right"></div>
-              <div id="pot-chips-right" class="pot-chips pot-chips-end"></div>
+              <div class="hud-pot-below-name hud-pot-below-name--pl" aria-hidden="true">
+                <div id="pot-chips-right" class="pot-chips pot-chips--under-name"></div>
+              </div>
             </div>
           </div>
         </div>
@@ -460,13 +464,18 @@ export class HUD {
     this.endLevel = this.end.querySelector('#end-lvl') as HTMLElement;
 
     this.shopOverlay = el('div', 'hud-shop-overlay');
+    const shopBannerArt = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/shop_brainrot.png');
+    const panelBannerBg = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/bg.jpg');
     this.shopOverlay.innerHTML = `
       <div class="hud-shop-backdrop" id="hud-shop-backdrop"></div>
       <div class="hud-shop-modal">
-        <div class="hud-shop-header">
+        <div class="hud-shop-topbar">
           <div class="hud-shop-title">Cue Shop</div>
           <div class="hud-shop-balance" id="hud-shop-coins">0 🪙</div>
           <button class="hud-shop-close" id="hud-shop-close" aria-label="Close shop">×</button>
+        </div>
+        <div class="hud-shop-banner" aria-hidden="true">
+          <img class="hud-shop-banner-img" src="${shopBannerArt}" alt="" decoding="async" draggable="false" />
         </div>
         <div class="hud-shop-grid" id="hud-shop-grid"></div>
       </div>
@@ -478,12 +487,15 @@ export class HUD {
     this.leaderboardOverlay.innerHTML = `
       <div class="hud-leaderboard-backdrop" id="hud-leaderboard-backdrop"></div>
       <div class="hud-leaderboard-modal">
-        <div class="hud-leaderboard-header">
-          <div class="hud-leaderboard-title">Leaderboard</div>
-          <div class="hud-leaderboard-sub">Online ranking — coming soon</div>
-          <button class="hud-leaderboard-close" id="hud-leaderboard-close" aria-label="Close leaderboard">×</button>
+        <div class="hud-leaderboard-topbar hud-shop-topbar">
+          <div class="hud-shop-title">Leaderboard</div>
+          <div class="hud-shop-balance hud-lb-top-pill">Online ranking — coming soon</div>
+          <button class="hud-shop-close" id="hud-leaderboard-close" type="button" aria-label="Close leaderboard">×</button>
         </div>
-        <div class="hud-leaderboard-list" id="hud-leaderboard-list"></div>
+        <div class="hud-leaderboard-banner hud-shop-banner" aria-hidden="true">
+          <img class="hud-shop-banner-img" src="${panelBannerBg}" alt="" decoding="async" draggable="false" />
+        </div>
+        <div class="hud-leaderboard-grid hud-shop-grid" id="hud-leaderboard-list"></div>
       </div>
     `;
     this.leaderboardList = this.leaderboardOverlay.querySelector('#hud-leaderboard-list') as HTMLElement;
@@ -492,12 +504,15 @@ export class HUD {
     this.achievementsOverlay.innerHTML = `
       <div class="hud-achievements-backdrop" id="hud-achievements-backdrop"></div>
       <div class="hud-achievements-modal">
-        <div class="hud-achievements-header">
-          <div class="hud-achievements-title">Achievements</div>
-          <div class="hud-achievements-sub" id="hud-achievements-sub">0 / 0 unlocked</div>
-          <button class="hud-achievements-close" id="hud-achievements-close" aria-label="Close achievements">×</button>
+        <div class="hud-achievements-topbar hud-shop-topbar">
+          <div class="hud-shop-title">Achievements</div>
+          <div class="hud-shop-balance" id="hud-achievements-sub">0 / 0 unlocked</div>
+          <button class="hud-shop-close" id="hud-achievements-close" type="button" aria-label="Close achievements">×</button>
         </div>
-        <div class="hud-achievements-list" id="hud-achievements-list"></div>
+        <div class="hud-achievements-banner hud-shop-banner" aria-hidden="true">
+          <img class="hud-shop-banner-img" src="${panelBannerBg}" alt="" decoding="async" draggable="false" />
+        </div>
+        <div class="hud-achievements-grid hud-shop-grid" id="hud-achievements-list"></div>
       </div>
     `;
     this.achievementsList = this.achievementsOverlay.querySelector('#hud-achievements-list') as HTMLElement;
@@ -508,6 +523,7 @@ export class HUD {
     this.menuAccountText = this.menu.querySelector('#menu-account-text') as HTMLElement;
     this.menuCoinAmount = this.menu.querySelector('#menu-coin-amount') as HTMLElement;
     this.menuPlayBtn = this.menu.querySelector('#menu-btn-play') as HTMLButtonElement;
+    this.menuTournamentsBtn = this.menu.querySelector('#menu-btn-tournaments') as HTMLButtonElement;
     this.menuPlayLabel = this.menu.querySelector('#menu-play-label') as HTMLElement;
     this.menuLeaderboardBtn = this.menu.querySelector('#menu-circle-leaderboard') as HTMLButtonElement;
     this.menuShopBtn = this.menu.querySelector('#menu-circle-shop') as HTMLButtonElement;
@@ -516,44 +532,61 @@ export class HUD {
     this.modeSelectOverlay = el('div', 'hud-modeselect-overlay');
     this.modeSelectOverlay.innerHTML = `
       <div class="hud-modeselect-page">
-        <div class="modeselect-header">
-          <button class="modeselect-back" id="modeselect-back" type="button" aria-label="Back to menu">
-            <span class="modeselect-back-glyph" aria-hidden="true"></span>
-            <span class="modeselect-back-label">Back</span>
-          </button>
-          <div class="modeselect-title">Select Mode</div>
-          <div class="modeselect-spacer" aria-hidden="true"></div>
+        <div class="hud-modeselect-bg" aria-hidden="true"></div>
+        <div class="hud-modeselect-fx" aria-hidden="true"></div>
+        <div class="hud-modeselect-content">
+          <div class="modeselect-header">
+            <button class="modeselect-back" id="modeselect-back" type="button" aria-label="Back to menu">
+              <span class="modeselect-back-glyph" aria-hidden="true"></span>
+              <span class="modeselect-back-label">Back</span>
+            </button>
+            <div class="modeselect-title" id="modeselect-title">Select Mode</div>
+            <div class="modeselect-spacer" aria-hidden="true"></div>
+          </div>
+          <div class="modeselect-track-scrim">
+            <div class="modeselect-track" id="modeselect-track" role="list"></div>
+          </div>
+          <div class="modeselect-dots" id="modeselect-dots" aria-hidden="true"></div>
         </div>
-        <div class="modeselect-track" id="modeselect-track" role="list"></div>
-        <div class="modeselect-dots" id="modeselect-dots" aria-hidden="true"></div>
       </div>
     `;
     this.modeSelectTrack = this.modeSelectOverlay.querySelector('#modeselect-track') as HTMLElement;
     this.modeSelectDots = this.modeSelectOverlay.querySelector('#modeselect-dots') as HTMLElement;
     this.modeSelectBackBtn = this.modeSelectOverlay.querySelector('#modeselect-back') as HTMLButtonElement;
+    this.modeSelectTitleEl = this.modeSelectOverlay.querySelector('#modeselect-title') as HTMLElement;
 
     this.tournamentOverlay = el('div', 'hud-tournament-overlay');
+    const tournamentPlayIcon = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/button-start.png');
     this.tournamentOverlay.innerHTML = `
+      <div class="hud-tournament-overlay-bg" aria-hidden="true"></div>
+      <div class="hud-tournament-overlay-fx" aria-hidden="true"></div>
       <div class="hud-tournament-modal">
         <div class="hud-tournament-header">
           <button class="modeselect-back hud-tournament-back" id="hud-tournament-exit" type="button" aria-label="Back to mode select">
             <span class="modeselect-back-glyph" aria-hidden="true"></span>
             <span class="modeselect-back-label">Back</span>
           </button>
-          <div>
-            <div class="hud-tournament-title" id="hud-tournament-title">Tournament Bracket</div>
-            <div class="hud-tournament-sub" id="hud-tournament-sub">Match 1 of 3</div>
-          </div>
+            <div class="hud-tournament-head-center">
+              <div class="hud-tournament-title-row" id="hud-tournament-title-row">
+                <img class="hud-tournament-cup hud-tournament-cup--hidden" id="hud-tournament-cup" alt="" decoding="async" draggable="false" />
+              </div>
+            </div>
           <div class="modeselect-spacer" aria-hidden="true"></div>
         </div>
         <div class="hud-tournament-slots" id="hud-tournament-slots"></div>
-        <button class="btn primary hud-tournament-start" id="hud-tournament-start" type="button">Start Match 1</button>
+        <button class="hud-tournament-start interactive" id="hud-tournament-start" type="button" aria-label="Start Match 1">
+          <span class="hud-tournament-start-inner">
+            <img class="hud-tournament-start-plate" src="${tournamentPlayIcon}" alt="" decoding="async" draggable="false" />
+            <span id="hud-tournament-start-label" class="hud-tournament-start-label">Start Match 1</span>
+          </span>
+        </button>
       </div>
     `;
     this.tournamentSlots = this.tournamentOverlay.querySelector('#hud-tournament-slots') as HTMLElement;
-    this.tournamentTitle = this.tournamentOverlay.querySelector('#hud-tournament-title') as HTMLElement;
-    this.tournamentSub = this.tournamentOverlay.querySelector('#hud-tournament-sub') as HTMLElement;
+    this.tournamentCupImg = this.tournamentOverlay.querySelector('#hud-tournament-cup') as HTMLImageElement;
+    this.tournamentTitleRow = this.tournamentOverlay.querySelector('#hud-tournament-title-row') as HTMLElement;
     this.tournamentStartBtn = this.tournamentOverlay.querySelector('#hud-tournament-start') as HTMLButtonElement;
+    this.tournamentStartLabel = this.tournamentOverlay.querySelector('#hud-tournament-start-label') as HTMLElement;
     this.tournamentExitBtn = this.tournamentOverlay.querySelector('#hud-tournament-exit') as HTMLButtonElement;
 
     this.nextModal = el('div', 'hud-next-overlay');
@@ -700,6 +733,9 @@ export class HUD {
     /** Play button — yellow pill art with built-in play arrow. */
     const btnPlayUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/button_play.png');
     this.menu.style.setProperty('--menu-play-image', `url("${btnPlayUrl}")`);
+
+    const btnTournamentsUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/button_play_tournaments.png');
+    this.menu.style.setProperty('--menu-tournaments-image', `url("${btnTournamentsUrl}")`);
 
     const menuCoinIconUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/money.png');
     this.menu.style.setProperty('--menu-coin-icon-image', `url("${menuCoinIconUrl}")`);
@@ -887,6 +923,7 @@ export class HUD {
       const t = e.target as HTMLElement;
       const btn = t.closest('[data-buy],[data-equip]') as HTMLElement | null;
       if (!btn) return;
+      if (btn.getAttribute('data-disabled') === 'true') return;
       const buy = btn.dataset.buy;
       const equip = btn.dataset.equip;
       if (buy) {
@@ -976,7 +1013,11 @@ export class HUD {
 
     this.menuPlayBtn.addEventListener('click', () => {
       this.playHudClickSound();
-      this.showModeSelectOverlay();
+      this.showModeSelectOverlay('casual');
+    });
+    this.menuTournamentsBtn.addEventListener('click', () => {
+      this.playHudClickSound();
+      this.showModeSelectOverlay('tournaments');
     });
     this.menuLeaderboardBtn.addEventListener('click', () => {
       this.playHudClickSound();
@@ -1083,7 +1124,7 @@ export class HUD {
         /** Tournament entry page back action → return to mode select. */
         this.hideTournamentOverlay();
         this.pushCommand({ type: 'tournament.exit' });
-        this.showModeSelectOverlay();
+        this.showModeSelectOverlay('tournaments');
         return;
       }
       this.hideTournamentOverlay();
@@ -1314,7 +1355,6 @@ export class HUD {
     if (this.endLevel) this.endLevel.textContent = levelLabel;
 
     this.topStack.querySelector('#opp-name')!.textContent = opp.name;
-    this.topStack.querySelector('#opp-tier')!.textContent = opp.tier.toUpperCase();
     this.topStack.querySelector('#opp-lvl')!.textContent = String(
       Math.min(99, eb.levelIndex + 3 + Math.floor(opp.accuracy * 40)),
     );
@@ -1543,22 +1583,22 @@ export class HUD {
         const isEquipped = equipped === item.id;
         const canBuy = coins >= item.price;
         let actionLabel = '';
-        let actionClass = 'ghost';
         let actionData = '';
         let actionDisabled = false;
+        let ctaClasses = 'btn shop-cta';
         if (isOwned) {
           if (isEquipped) {
             actionLabel = 'Equipped';
-            actionClass = 'ghost';
+            ctaClasses += ' ghost shop-cta--equipped-state';
             actionDisabled = true;
           } else {
             actionLabel = 'Equip';
-            actionClass = 'primary';
+            ctaClasses += ' primary shop-cta--equip';
             actionData = `data-equip="${item.id}"`;
           }
         } else {
-          actionLabel = `${formatNumber(item.price)} 🪙 Buy`;
-          actionClass = canBuy ? 'primary' : 'ghost';
+          actionLabel = item.price <= 0 ? 'Buy — Free' : `Buy — ${formatNumber(item.price)} 🪙`;
+          ctaClasses += canBuy ? ' primary shop-cta--buy' : ' ghost shop-cta--buy shop-cta--buy-off';
           actionData = `data-buy="${item.id}"`;
           actionDisabled = !canBuy;
         }
@@ -1571,22 +1611,32 @@ export class HUD {
           styleParts.push(`--cue-tip:${prev.tip}`);
         }
         const cardStyle = styleParts.length > 0 ? `style="${styleParts.join(';')}"` : '';
-        return `
-        <div class="shop-card" data-cue="${item.id}" ${cardStyle}>
-          <div class="shop-card-head">
-            <div class="shop-card-name">${item.name}</div>
-            <div class="shop-card-price">${formatNumber(item.price)} 🪙</div>
-          </div>
-          <div class="shop-card-cue" aria-hidden="true">
+        const rarityClass = shopCueRarityClass(item.id);
+        const cueArtUrl = shopCueShowcaseImageUrl(this.assetBaseUrl, item.id);
+        const showcaseInner = cueArtUrl
+          ? `<img class="shop-card-cue-img" src="${escapeHtml(cueArtUrl)}" alt="" decoding="async" draggable="false" />`
+          : `<div class="shop-card-cue shop-card-cue--procedural" aria-hidden="true">
             <span class="shop-card-cue-tip"></span>
             <span class="shop-card-cue-ferrule"></span>
             <span class="shop-card-cue-shaft"></span>
             <span class="shop-card-cue-accent"></span>
             <span class="shop-card-cue-butt"></span>
             <span class="shop-card-cue-cap"></span>
-          </div>
-          <div class="shop-card-actions">
-            <button class="btn ${actionClass}" ${actionData} ${actionDisabled ? 'data-disabled="true"' : ''}>${actionLabel}</button>
+          </div>`;
+        return `
+        <div class="shop-card ${rarityClass}${isEquipped ? ' shop-card--equipped' : ''}" data-cue="${item.id}" aria-label="${escapeHtml(item.name)}" ${cardStyle}>
+          <div class="shop-card-glow" aria-hidden="true"></div>
+          <div class="shop-card-frame" aria-hidden="true"></div>
+          <div class="shop-card-inner">
+            <div class="shop-card-head">
+              <div class="shop-card-name">${escapeHtml(item.name)}</div>
+            </div>
+            <div class="shop-card-visual-block">
+              <div class="shop-card-showcase">${showcaseInner}</div>
+              <div class="shop-card-actions">
+                <button type="button" class="${ctaClasses}" ${actionData} ${actionDisabled ? 'data-disabled="true"' : ''}>${escapeHtml(actionLabel)}</button>
+              </div>
+            </div>
           </div>
         </div>`;
       })
@@ -1602,6 +1652,7 @@ export class HUD {
       this.menuShopBtn.querySelector('.menu-circle-icon'),
       this.menuAchievementsBtn.querySelector('.menu-circle-icon'),
       this.menuPlayBtn,
+      this.menuTournamentsBtn,
     ];
     targets.forEach((el, i) => {
       if (!el) return;
@@ -1714,11 +1765,23 @@ export class HUD {
     this.achievementsOverlay.classList.remove('show');
   }
 
-  private showModeSelectOverlay(): void {
+  private syncModeSelectMenuBackdrop(): void {
+    const page = this.modeSelectOverlay.querySelector('.hud-modeselect-page') as HTMLElement | null;
+    if (!page) return;
+    const v = this.menu.style.getPropertyValue('--menu-bg-image').trim();
+    if (v) page.style.setProperty('--menu-bg-image', v);
+    else page.style.removeProperty('--menu-bg-image');
+  }
+
+  private showModeSelectOverlay(filter: 'casual' | 'tournaments'): void {
+    this.modeSelectFilter = filter;
     this.modeSelectVisible = true;
+    this.modeSelectLastRenderKey = null;
+    this.modeSelectTitleEl.textContent = filter === 'casual' ? 'Casual' : 'Tournaments';
     this.renderModeSelectPage(this.getHud());
+    this.syncModeSelectMenuBackdrop();
     this.modeSelectOverlay.classList.add('show');
-    /** Reset to the first card (Casual) on each open so the entry point is consistent. */
+    /** Reset to the first visible card on each open. */
     requestAnimationFrame(() => {
       this.modeSelectTrack.scrollLeft = 0;
       this.modeSelectActiveIdx = 0;
@@ -1728,6 +1791,9 @@ export class HUD {
 
   private hideModeSelectOverlay(): void {
     this.modeSelectVisible = false;
+    (this.modeSelectOverlay.querySelector('.hud-modeselect-page') as HTMLElement | null)?.style.removeProperty(
+      '--menu-bg-image',
+    );
     this.modeSelectOverlay.classList.remove('show');
     /** Force a fresh render on the next open so coin/catalog changes are picked up. */
     this.modeSelectLastRenderKey = null;
@@ -1976,21 +2042,34 @@ export class HUD {
   private renderModeSelectPage(h: HudState): void {
     const coins = h.profile?.coins ?? 0;
     const catalog = h.tournamentCatalog ?? [];
+    const filter = this.modeSelectFilter;
     /**
      * Render key includes everything that affects card content (coin balance
      * for affordability, plus the catalog identity). When unchanged, skip the
      * innerHTML rewrite so the button DOM stays stable across frames — this
      * is what keeps click events alive between pointerdown and pointerup.
      */
-    const key = `${coins}|${catalog.map((d) => d.id).join(',')}`;
+    const key = `${filter}|${coins}|${catalog.map((d) => d.id).join(',')}`;
     if (key === this.modeSelectLastRenderKey) return;
     this.modeSelectLastRenderKey = key;
 
     const cards: string[] = [];
-    cards.push(this.renderCasualCard(coins));
-    for (const def of catalog) cards.push(this.renderTournamentCard(def, coins));
+    if (filter === 'casual') {
+      cards.push(this.renderCasualCard(coins));
+    } else {
+      for (const def of catalog) cards.push(this.renderTournamentCard(def, coins));
+      if (cards.length === 0) {
+        cards.push(`
+      <article class="modeselect-card modeselect-card-empty" role="listitem">
+        <div class="modeselect-card-body modeselect-card-body-empty">
+          <p class="modeselect-empty-msg">No tournaments available.</p>
+        </div>
+      </article>`);
+      }
+    }
     this.modeSelectTrack.innerHTML = cards.join('');
     const total = cards.length;
+    this.modeSelectDots.style.display = total > 1 ? '' : 'none';
     let dotsHtml = '';
     for (let i = 0; i < total; i++) {
       dotsHtml += `<span class="modeselect-dot" data-active="${i === 0 ? 'true' : 'false'}"></span>`;
@@ -1998,26 +2077,67 @@ export class HUD {
     this.modeSelectDots.innerHTML = dotsHtml;
   }
 
+  private modeSelectHeroPortraitUrl(catalogId: 'casual' | string): string {
+    if (catalogId === 'casual') {
+      return resolveBrowserAssetUrl(this.assetBaseUrl, AssetManifest['ui.avatar.player'].browserUrl);
+    }
+    const oppByTier: Readonly<Record<string, string>> = {
+      rookie: 'tungo',
+      pro: 'torta_tartaruga',
+      elite: 'gattotto_otto',
+      grandslam: 'balleeina',
+    };
+    return opponentHudAvatarUrl(this.assetBaseUrl, oppByTier[catalogId] ?? 'tungo');
+  }
+
+  /** Mode-select trophy art — see `AssetManifest` `ui.modeselect.cup.*`. */
+  private modeSelectTournamentCupUrl(defId: string): string {
+    const k = TOURNAMENT_MODE_CUP_MANIFEST[defId];
+    if (k) {
+      const e = AssetManifest[k];
+      if (e) return resolveBrowserAssetUrl(this.assetBaseUrl, e.browserUrl);
+    }
+    return this.modeSelectHeroPortraitUrl(defId);
+  }
+
   private renderCasualCard(_coins: number): string {
     void _coins;
+    const heroUrl = escapeHtml(this.modeSelectHeroPortraitUrl('casual'));
     return `
       <article class="modeselect-card modeselect-card-casual" data-card-idx="0" role="listitem">
-        <div class="modeselect-tier-badge">CASUAL</div>
-        <div class="modeselect-name">Casual</div>
-        <div class="modeselect-tagline">Quick career match</div>
-        <div class="modeselect-blurb">A single match against your current career opponent. Win to climb the ladder.</div>
-        <div class="modeselect-stats">
-          <div class="modeselect-stat">
-            <span class="modeselect-stat-label">MATCHES</span>
-            <span class="modeselect-stat-value">1</span>
+        <div class="modeselect-card-body">
+          <header class="modeselect-card-head">
+            <div class="modeselect-head-main">
+              <div class="modeselect-name">Casual</div>
+              <div class="modeselect-tagline">Quick career match</div>
+            </div>
+            <div class="modeselect-tier-badge modeselect-tier-badge--capsule">CASUAL</div>
+          </header>
+          <div class="modeselect-blurb">A single match against your current career opponent. Win to climb the ladder.</div>
+          <div class="modeselect-stat-grid" data-cols="1">
+            <div class="modeselect-stat">
+              <span class="modeselect-stat-label">MATCHES</span>
+              <span class="modeselect-stat-value"><span class="modeselect-stat-num">1</span></span>
+            </div>
           </div>
+          <div class="modeselect-prize">
+            <div class="modeselect-prize-label">XP</div>
+            <div class="modeselect-prize-line">
+              <span class="modeselect-prize-num">+${formatNumber(XP_REWARD_WIN)}</span>
+              <span class="modeselect-prize-unit">XP</span>
+            </div>
+            <div class="modeselect-prize-sub">per win</div>
+          </div>
+          <div class="modeselect-fee-row">
+            <div class="modeselect-fee modeselect-fee-free modeselect-fee--wide">FREE TO PLAY</div>
+          </div>
+          <div class="modeselect-hero" aria-hidden="true">
+            <div class="modeselect-hero-bloom" aria-hidden="true"></div>
+            <div class="modeselect-hero-rim" aria-hidden="true"></div>
+            <img class="modeselect-hero-img" src="${heroUrl}" alt="" decoding="async" />
+          </div>
+          <button class="btn primary modeselect-cta" type="button" data-mode-action="casual">Play</button>
         </div>
-        <div class="modeselect-prize">
-          <div class="modeselect-prize-label">XP</div>
-          <div class="modeselect-prize-value">+${formatNumber(XP_REWARD_WIN)} XP per win</div>
-        </div>
-        <div class="modeselect-fee modeselect-fee-free">FREE</div>
-        <button class="btn primary modeselect-cta" type="button" data-mode-action="casual">Play</button>
       </article>
     `;
   }
@@ -2032,33 +2152,46 @@ export class HUD {
       ? `Enter — ${formatNumber(def.entryFeeCoins)} 🪙`
       : `Need ${formatNumber(def.entryFeeCoins)} 🪙`;
     const ctaDisabled = canAfford ? '' : 'data-disabled="true"';
+    const heroUrl = escapeHtml(this.modeSelectTournamentCupUrl(def.id));
     return `
       <article class="modeselect-card modeselect-card-${escapeHtml(def.accent)}" data-card-tournament-id="${escapeHtml(def.id)}" role="listitem">
-        <div class="modeselect-tier-badge">${escapeHtml(tierLabel)}</div>
-        <div class="modeselect-name">${escapeHtml(def.name)}</div>
-        <div class="modeselect-tagline">${escapeHtml(def.tagline)}</div>
-        <div class="modeselect-blurb">${escapeHtml(def.blurb)}</div>
-        <div class="modeselect-stats">
-          <div class="modeselect-stat">
-            <span class="modeselect-stat-label">MATCHES</span>
-            <span class="modeselect-stat-value">${def.matchCount}</span>
+        <div class="modeselect-card-body">
+          <header class="modeselect-card-head">
+            <div class="modeselect-head-main">
+              <div class="modeselect-name">${escapeHtml(def.name)}</div>
+              <div class="modeselect-tagline">${escapeHtml(def.tagline)}</div>
+            </div>
+            <div class="modeselect-tier-badge modeselect-tier-badge--capsule">${escapeHtml(tierLabel)}</div>
+          </header>
+          <div class="modeselect-blurb">${escapeHtml(def.blurb)}</div>
+          <div class="modeselect-stat-grid" data-cols="2">
+            <div class="modeselect-stat">
+              <span class="modeselect-stat-label">MATCHES</span>
+              <span class="modeselect-stat-value"><span class="modeselect-stat-num">${def.matchCount}</span></span>
+            </div>
+            <div class="modeselect-stat">
+              <span class="modeselect-stat-label">DIFFICULTY</span>
+              <span class="modeselect-stat-value modeselect-stat-value--dots">${renderDifficultyDots(def.difficulty)}</span>
+            </div>
           </div>
-          <div class="modeselect-stat">
-            <span class="modeselect-stat-label">DIFFICULTY</span>
-            <span class="modeselect-stat-value">${renderDifficultyDots(def.difficulty)}</span>
+          <div class="modeselect-prize">
+            <div class="modeselect-prize-label">CHAMPION BONUS</div>
+            <div class="modeselect-prize-line">
+              <span class="modeselect-prize-num">+${formatNumber(def.championBonusXp)}</span>
+              <span class="modeselect-prize-unit">XP</span>
+            </div>
+            <div class="modeselect-prize-sub">if you clear the bracket</div>
           </div>
+          <div class="modeselect-hero modeselect-hero--trophy" aria-hidden="true">
+            <div class="modeselect-hero-bloom" aria-hidden="true"></div>
+            <div class="modeselect-hero-rim" aria-hidden="true"></div>
+            <img class="modeselect-hero-img" src="${heroUrl}" alt="" decoding="async" />
+          </div>
+          <button class="btn ${canAfford ? 'primary' : 'ghost'} modeselect-cta" type="button"
+            data-mode-action="tournament:${escapeHtml(def.id)}" ${ctaDisabled}>
+            ${escapeHtml(ctaLabel)}
+          </button>
         </div>
-        <div class="modeselect-prize">
-          <div class="modeselect-prize-label">CHAMPION BONUS</div>
-          <div class="modeselect-prize-value">+${formatNumber(def.championBonusXp)} XP</div>
-        </div>
-        <div class="modeselect-fee${canAfford ? '' : ' modeselect-fee-locked'}">
-          ENTRY ${formatNumber(def.entryFeeCoins)} 🪙
-        </div>
-        <button class="btn ${canAfford ? 'primary' : 'ghost'} modeselect-cta" type="button"
-          data-mode-action="tournament:${escapeHtml(def.id)}" ${ctaDisabled}>
-          ${escapeHtml(ctaLabel)}
-        </button>
       </article>
     `;
   }
@@ -2067,29 +2200,38 @@ export class HUD {
     const t = h.tournament;
     if (!t) {
       this.tournamentSlots.innerHTML = '';
-      this.tournamentTitle.textContent = 'Tournament Bracket';
-      this.tournamentSub.textContent = '—';
       this.tournamentStartBtn.style.display = 'none';
+      this.tournamentOverlay.setAttribute('data-accent', 'pro');
+      this.tournamentTitleRow.setAttribute('aria-label', 'Tournament Bracket');
+      this.tournamentCupImg.alt = '';
+      this.tournamentCupImg.classList.add('hud-tournament-cup--hidden');
+      this.tournamentCupImg.removeAttribute('src');
       return;
     }
-    const round = Math.min(t.currentRound, t.size - 1);
     const stillRunning = t.status === 'active' && t.currentRound < t.size;
     const defName = t.defName ?? 'Tournament';
     /** Sync accent class so the bracket modal matches the chosen tournament colour. */
     this.tournamentOverlay.setAttribute('data-accent', t.defAccent ?? 'pro');
-    this.tournamentTitle.textContent =
+    const cupUrl = tournamentBracketCupUrl(this.assetBaseUrl, t.defId);
+    if (cupUrl) {
+      this.tournamentCupImg.src = cupUrl;
+      this.tournamentCupImg.classList.remove('hud-tournament-cup--hidden');
+    } else {
+      this.tournamentCupImg.removeAttribute('src');
+      this.tournamentCupImg.classList.add('hud-tournament-cup--hidden');
+    }
+    const bracketLabel =
       t.status === 'won'
         ? `${defName} — Champion`
         : t.status === 'lost'
           ? `${defName} — Ended`
           : defName;
-    this.tournamentSub.textContent = stillRunning
-      ? `Match ${t.currentRound + 1} of ${t.size}`
-      : t.status === 'won'
-        ? `Cleared all ${t.size} matches`
-        : `Eliminated in match ${round + 1}`;
-    this.tournamentStartBtn.style.display = stillRunning ? 'inline-flex' : 'none';
-    this.tournamentStartBtn.textContent = `Start Match ${t.currentRound + 1}`;
+    this.tournamentTitleRow.setAttribute('aria-label', bracketLabel);
+    this.tournamentCupImg.alt = bracketLabel;
+    this.tournamentStartBtn.style.display = stillRunning ? 'block' : 'none';
+    const startCta = `Start Match ${t.currentRound + 1}`;
+    this.tournamentStartLabel.textContent = startCta;
+    this.tournamentStartBtn.setAttribute('aria-label', startCta);
     const untouchedRun =
       t.status === 'active' &&
       t.currentRound === 0 &&
@@ -2099,31 +2241,49 @@ export class HUD {
     if (exitLabel) exitLabel.textContent = exitText;
     else this.tournamentExitBtn.textContent = exitText;
 
+    const urlTournamentUpNext = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/up-next.png');
+    const urlTournamentLocked = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/locked.png');
+
     this.tournamentSlots.innerHTML = t.opponents
       .map((opp, i) => {
         const result = t.record[i] ?? 'pending';
         const isCurrent = stillRunning && i === t.currentRound;
         const status = isCurrent ? 'current' : result;
-        const initial = (opp.name?.[0] ?? '?').toUpperCase();
-        let hue = 0;
-        for (let k = 0; k < opp.id.length; k++) hue = (hue + opp.id.charCodeAt(k) * 37) % 360;
-        const pillLabel =
-          status === 'won'
-            ? 'Won'
-            : status === 'lost'
-              ? 'Lost'
-              : status === 'current'
-                ? 'Up Next'
-                : 'Locked';
+        const avatarUrl = opponentHudAvatarUrl(this.assetBaseUrl, opp.id);
+        const pillIsBadge = status === 'current' || status === 'pending';
+        const pillInner =
+          status === 'current'
+            ? `<img class="tournament-slot-pill-img" src="${urlTournamentUpNext}" alt="Up next" decoding="async" />`
+            : status === 'pending'
+              ? `<img class="tournament-slot-pill-img" src="${urlTournamentLocked}" alt="Locked" decoding="async" />`
+              : status === 'won'
+                ? 'Won'
+                : 'Lost';
+        const pillClass = pillIsBadge
+          ? `tournament-slot-pill tournament-slot-pill--badge tournament-pill-${status}`
+          : `tournament-slot-pill tournament-pill-${status}`;
+        const pillWrapClass =
+          pillIsBadge && status === 'current'
+            ? 'tournament-slot-pill-outer tournament-slot-pill-outer--current'
+            : pillIsBadge
+              ? 'tournament-slot-pill-outer tournament-slot-pill-outer--pending'
+              : 'tournament-slot-pill-outer tournament-slot-pill-outer--text';
         return `
           <div class="tournament-slot tournament-slot-${status}">
-            <div class="tournament-slot-index">M${i + 1}</div>
-            <div class="tournament-slot-avatar" style="--t-hue:${hue}">${escapeHtml(initial)}</div>
-            <div class="tournament-slot-meta">
-              <div class="tournament-slot-name">${escapeHtml(opp.name)}</div>
-              <div class="tournament-slot-tier">${escapeHtml(opp.tier.toUpperCase())}</div>
+            <div class="tournament-slot-main">
+              <div class="tournament-slot-avatar-frame" aria-hidden="true">
+                <span class="tournament-slot-avatar-ring" aria-hidden="true"></span>
+                <img class="tournament-slot-avatar-img" src="${avatarUrl}" alt="" decoding="async" />
+              </div>
+              <div class="tournament-slot-titles">
+                <div class="tournament-slot-match-line">Match ${i + 1}</div>
+                <div class="tournament-slot-name">${escapeHtml(opp.name)}</div>
+                <div class="tournament-slot-tier-badge">${escapeHtml(opp.tier.toUpperCase())}</div>
+              </div>
             </div>
-            <div class="tournament-slot-pill tournament-pill-${status}">${pillLabel}</div>
+            <div class="${pillWrapClass}">
+              <div class="${pillClass}">${pillInner}</div>
+            </div>
           </div>`;
       })
       .join('');
@@ -2247,30 +2407,23 @@ export class HUD {
   ): void {
     const chipsL = this.topStack.querySelector('#pot-chips-left')!;
     const chipsR = this.topStack.querySelector('#pot-chips-right')!;
-    const lblL = this.topStack.querySelector('#pot-label-left')!;
-    const lblR = this.topStack.querySelector('#pot-label-right')!;
-    const potUnders = this.topStack.querySelectorAll('.pot-under');
-    const potsRow = this.topStack.querySelector('#hud-top-pots') as HTMLElement;
-
-    for (const el of potUnders) {
-      (el as HTMLElement).style.display = '';
-    }
-
-    lblL.textContent = ctx.potTargetLabelOpponent;
-    lblR.textContent = ctx.potTargetLabelPlayer;
+    const wrapL = chipsL.closest('.hud-pot-below-name') as HTMLElement | null;
+    const wrapR = chipsR.closest('.hud-pot-below-name') as HTMLElement | null;
 
     if (!ctx.showPotProgressStrip) {
       chipsL.innerHTML = '';
       chipsR.innerHTML = '';
-      potsRow.style.display = 'none';
+      if (wrapL) wrapL.style.display = 'none';
+      if (wrapR) wrapR.style.display = 'none';
       return;
     }
 
-    potsRow.style.removeProperty('display');
+    if (wrapL) wrapL.style.removeProperty('display');
+    if (wrapR) wrapR.style.removeProperty('display');
 
     if (pot.kind === 'open') {
-      chipsL.innerHTML = stripOrdered(SOLID_NUMBERS, pot.solids, 'solid');
-      chipsR.innerHTML = stripOrdered(STRIPE_NUMBERS, pot.stripes, 'stripe');
+      chipsL.innerHTML = stripOrdered(SOLID_NUMBERS, pot.solids, this.assetBaseUrl);
+      chipsR.innerHTML = stripOrdered(STRIPE_NUMBERS, pot.stripes, this.assetBaseUrl);
       return;
     }
 
@@ -2279,11 +2432,11 @@ export class HUD {
     if (pg && ag) {
       const playerOrder = pg === 'solid' ? SOLID_NUMBERS : STRIPE_NUMBERS;
       const aiOrder = ag === 'solid' ? SOLID_NUMBERS : STRIPE_NUMBERS;
-      chipsL.innerHTML = stripOrdered(aiOrder, pot.ai, ag);
-      chipsR.innerHTML = stripOrdered(playerOrder, pot.player, pg);
+      chipsL.innerHTML = stripOrdered(aiOrder, pot.ai, this.assetBaseUrl);
+      chipsR.innerHTML = stripOrdered(playerOrder, pot.player, this.assetBaseUrl);
     } else {
-      chipsL.innerHTML = pot.ai.map((n) => chipHtml(n)).join('');
-      chipsR.innerHTML = pot.player.map((n) => chipHtml(n)).join('');
+      chipsL.innerHTML = stripOrdered(SOLID_NUMBERS, pot.ai, this.assetBaseUrl);
+      chipsR.innerHTML = stripOrdered(STRIPE_NUMBERS, pot.player, this.assetBaseUrl);
     }
   }
 
@@ -2481,44 +2634,50 @@ export class HUD {
 const SOLID_NUMBERS = [1, 2, 3, 4, 5, 6, 7] as const;
 const STRIPE_NUMBERS = [9, 10, 11, 12, 13, 14, 15] as const;
 
-function chipColor(n: number): string {
-  const m: Record<number, string> = {
-    1: '#f2c542',
-    2: '#2f6bff',
-    3: '#e23b3b',
-    4: '#6b2fd6',
-    5: '#ff7a1a',
-    6: '#1f7a4a',
-    7: '#6b1f1f',
-    8: '#141414',
-    9: '#ffd24d',
-    10: '#2f6bff',
-    11: '#e23b3b',
-    12: '#6b2fd6',
-    13: '#ff7a1a',
-    14: '#1f7a4a',
-    15: '#333',
-  };
-  return m[n] ?? '#888';
-}
-
 function stripOrdered(
   order: readonly number[],
   potted: number[],
-  slotKind: 'solid' | 'stripe',
+  assetBaseUrl: string,
 ): string {
-  const set = new Set(potted);
-  return order.map((n) => (set.has(n) ? chipHtml(n) : slotHtml(slotKind))).join('');
+  const pottedSet = new Set(potted);
+  /** Sırada kalan (atılmamış) toplar renkli; atılan slotta `no-ball` placeholder. */
+  return order.map((n) => potStripSlotHtml(n, assetBaseUrl, pottedSet.has(n))).join('');
 }
 
-function slotHtml(slotKind: 'solid' | 'stripe'): string {
-  const src = slotKind === 'solid' ? SOLID_BALL_ICON_URL : STRIPE_BALL_ICON_URL;
-  return `<span class="pot-slot pot-slot--icon" aria-hidden="true"><img class="pot-slot-img" src="${src}" alt="" decoding="async" /></span>`;
+function potStripSlotHtml(n: number, assetBaseUrl: string, isPotted: boolean): string {
+  if (isPotted) {
+    const emptySrc = resolveBrowserAssetUrl(assetBaseUrl, 'ui/no-ball.png');
+    return `<span class="pot-slot pot-slot--icon" aria-hidden="true"><img class="pot-slot-img" src="${emptySrc}" alt="" decoding="async" /></span>`;
+  }
+  const ballSrc = resolveBrowserAssetUrl(assetBaseUrl, `ui/balls/${n}.png`);
+  return `<span class="pot-slot pot-slot--icon" aria-hidden="true"><img class="pot-slot-img" src="${ballSrc}" alt="" decoding="async" /></span>`;
 }
 
-function chipHtml(n: number): string {
-  const bg = chipColor(n);
-  return `<span class="pot-chip" style="background:${bg}">${n}</span>`;
+/** Cue shop showcase art (full card PNGs); other catalog ids use procedural preview. */
+function shopCueShowcaseImageUrl(assetBaseUrl: string, cueId: string): string | null {
+  const rel: Record<string, string> = {
+    classic: 'ui/cue_classic.png',
+    street: 'ui/cue_street_maple.png',
+    pro: 'ui/cue_pro_fiber.png',
+    neon: 'ui/cue_neon_glow.png',
+  };
+  const path = rel[cueId];
+  return path ? resolveBrowserAssetUrl(assetBaseUrl, path) : null;
+}
+
+function shopCueRarityClass(cueId: string): string {
+  switch (cueId) {
+    case 'classic':
+      return 'shop-card--rarity-classic';
+    case 'street':
+      return 'shop-card--rarity-street';
+    case 'pro':
+      return 'shop-card--rarity-pro';
+    case 'neon':
+      return 'shop-card--rarity-neon';
+    default:
+      return 'shop-card--rarity-classic';
+  }
 }
 
 function el(tag: string, cls: string): HTMLElement {
@@ -2546,6 +2705,21 @@ function escapeHtml(s: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+/** Maps `TournamentCatalog` tier id → mode-select trophy manifest key. */
+const TOURNAMENT_MODE_CUP_MANIFEST: Readonly<Record<string, keyof typeof AssetManifest>> = {
+  rookie: 'ui.modeselect.cup.rookie',
+  pro: 'ui.modeselect.cup.pro',
+  elite: 'ui.modeselect.cup.elite',
+  grandslam: 'ui.modeselect.cup.grandslam',
+};
+
+function tournamentBracketCupUrl(assetBaseUrl: string, defId: string): string | null {
+  const k = TOURNAMENT_MODE_CUP_MANIFEST[defId];
+  if (!k) return null;
+  const e = AssetManifest[k];
+  return e ? resolveBrowserAssetUrl(assetBaseUrl, e.browserUrl) : null;
 }
 
 /** Pretty tier label per catalog id. Falls back to `${id.toUpperCase()} TIER` when missing. */

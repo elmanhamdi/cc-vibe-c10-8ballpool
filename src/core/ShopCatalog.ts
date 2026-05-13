@@ -20,7 +20,7 @@ export type CueShopItem = {
   };
 };
 
-/** Five-tier catalog; ids must stay stable for saves/opponent assignment. */
+/** Shop cue catalog (stable ids for saves). */
 export const SHOP_CUE_CATALOG: readonly CueShopItem[] = [
   {
     id: 'classic',
@@ -57,23 +57,5 @@ export const SHOP_CUE_CATALOG: readonly CueShopItem[] = [
     accent: '#ff6f91',
     preview: { shaft: '#ff6f91', butt: '#ff3d72', tip: '#3a2230' },
     stats: { power: 1.12, aim: 1.1, spin: 1.1 },
-  },
-  {
-    id: 'carbon',
-    name: 'Carbon Edge',
-    price: 320,
-    description: 'Low-deflection carbon with laser sight decals',
-    accent: '#66b6ff',
-    preview: { shaft: '#1c2230', butt: '#101822', tip: '#4d6fa8' },
-    stats: { power: 1.15, aim: 1.18, spin: 1.14 },
-  },
-  {
-    id: 'legend',
-    name: 'Legend Forged',
-    price: 480,
-    description: 'Tour-grade forged shaft and inlays',
-    accent: '#f4d35e',
-    preview: { shaft: '#d9b34a', butt: '#3b2a14', tip: '#3f6a98' },
-    stats: { power: 1.2, aim: 1.24, spin: 1.2 },
   },
 ];

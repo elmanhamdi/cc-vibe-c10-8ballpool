@@ -323,6 +323,39 @@ export const AssetManifest = {
     notes: 'SVG in browser',
   },
 
+  'ui.modeselect.cup.rookie': {
+    id: 'ui.modeselect.cup.rookie',
+    kind: 'ui',
+    browserUrl: 'ui/cup_rookie_charge.png',
+    futureMhsPath: '@UI/cup_rookie_charge.png',
+    sourceFormat: 'png',
+    notes: 'Tournament mode-select trophy (Rookie Charge / ROOKIE CUP).',
+  },
+  'ui.modeselect.cup.pro': {
+    id: 'ui.modeselect.cup.pro',
+    kind: 'ui',
+    browserUrl: 'ui/cup_pro_series.png',
+    futureMhsPath: '@UI/cup_pro_series.png',
+    sourceFormat: 'png',
+    notes: 'Tournament mode-select trophy (Pro Series).',
+  },
+  'ui.modeselect.cup.elite': {
+    id: 'ui.modeselect.cup.elite',
+    kind: 'ui',
+    browserUrl: 'ui/cup_elite_brawl.png',
+    futureMhsPath: '@UI/cup_elite_brawl.png',
+    sourceFormat: 'png',
+    notes: 'Tournament mode-select trophy (Elite Brawl).',
+  },
+  'ui.modeselect.cup.grandslam': {
+    id: 'ui.modeselect.cup.grandslam',
+    kind: 'ui',
+    browserUrl: 'ui/cup_grand_slam.png',
+    futureMhsPath: '@UI/cup_grand_slam.png',
+    sourceFormat: 'png',
+    notes: 'Tournament mode-select trophy (Grand Slam / Masters).',
+  },
+
   'sound.pool.cueStrike': {
     id: 'sound.pool.cueStrike',
     kind: 'audio',

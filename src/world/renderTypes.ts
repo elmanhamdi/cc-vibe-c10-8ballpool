@@ -175,6 +175,8 @@ export interface HudState {
     powerBarHint?: boolean;
     /** First-run tutorial: pulse power slider + drag cursor until first stroke. */
     tutorialShootHint?: boolean;
+    /** 0–1 pull mirrored on the right-edge power bar (e.g. cue-stick charge on the table). */
+    powerBarPull01: number;
     /** Match-end opponent reaction (Tungo lose face) when the player wins. */
     matchEndOpponentPortrait?: { portraitAssetId: string; text: string } | null;
     /** Transient yellow popup over the table (group assignment / foul / etc.). */
@@ -184,6 +186,20 @@ export interface HudState {
       /** Increments per beat so the HUD can restart CSS animations. */
       beatId: number;
       durationSec: number;
+    };
+    /** First career break (level 0): full-screen aim how-to; blocks table input until dismissed. */
+    aimIntro?: {
+      visible: boolean;
+      title: string;
+      body: string;
+      confirmLabel: string;
+    };
+    /** Tutorial only: after clearing your group, same overlay pattern — pocket the 8. */
+    eightBallIntro?: {
+      visible: boolean;
+      title: string;
+      body: string;
+      confirmLabel: string;
     };
   };
   nextOpponent?: {

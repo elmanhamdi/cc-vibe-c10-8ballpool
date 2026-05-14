@@ -7,6 +7,8 @@ export const AssetIds = {
   ballSolid: (n: number) => `ball.solid.${n}` as const,
   ballStripe: (n: number) => `ball.stripe.${n}` as const,
   cueStick: 'vfx.cueStick',
+  /** Demo finger cursor on table during first-break aim intro. */
+  aimIntroFinger: 'vfx.aimIntroFinger',
   lineAim: 'line.aim',
   lineGhostObject: 'line.ghostObject',
   lineGhostCue: 'line.ghostCue',

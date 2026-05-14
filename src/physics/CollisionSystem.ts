@@ -22,6 +22,9 @@ const MAX_SUBSTEPS = 6;
 /** Min relative speed along normal (|dot|) to count as audible ball–ball hit (avoids resting jitter). */
 const BALL_BALL_HIT_SOUND_MIN_REL = 14;
 
+/** Default cue ball X: table horizontal center plus this offset (simulation units). */
+const CUE_DEFAULT_POS_X_OFFSET = 90;
+
 export interface PottedEvent {
   id: number;
   number: number;
@@ -100,7 +103,7 @@ export class CollisionSystem {
   placeCueBallForBreak(): void {
     const t = this.table;
     this.cue.active = true;
-    this.cue.pos.set(t.width * 0.5, t.height * 0.86);
+    this.cue.pos.set(t.width * 0.5 + CUE_DEFAULT_POS_X_OFFSET, t.height * 0.86);
     this.cue.vel.set(0, 0);
     this.cue.english.set(0, 0);
     this.cueRailSpinBoost = 0;
@@ -109,7 +112,7 @@ export class CollisionSystem {
   placeCueBallInKitchen(): void {
     const t = this.table;
     this.cue.active = true;
-    this.cue.pos.set(t.width * 0.5, t.headStringY + 40);
+    this.cue.pos.set(t.width * 0.5 + CUE_DEFAULT_POS_X_OFFSET, t.headStringY + 40);
     this.cue.vel.set(0, 0);
     this.cue.english.set(0, 0);
     this.cueRailSpinBoost = 0;
@@ -607,6 +610,6 @@ function createRack(table: Table, r: number): Ball[] {
     }
   }
 
-  add(0, 'cue', cx, table.height * 0.86);
+  add(0, 'cue', cx + CUE_DEFAULT_POS_X_OFFSET, table.height * 0.86);
   return balls;
 }

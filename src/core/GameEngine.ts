@@ -90,6 +90,7 @@ import { MemoryStorageAdapter, type StorageAdapter } from './StorageAdapter.js';
 
 const PROFILE_STORAGE_KEY = 'vertical-eight-ball.profile.v2';
 const TUTORIAL_STORAGE_KEY = 'vertical-eight-ball.tutorial.v1.completed';
+const AIM_INTRO_STORAGE_KEY = 'vertical-eight-ball.aimIntro.v1.dismissed';
 const DIFFICULTY_TIER_ORDER: readonly DifficultyTier[] = [
   'apprentice',
   'beginner',
@@ -193,6 +194,28 @@ export class GameEngine implements Game {
   private tutorialActive = false;
   /** Pulse power bar + drag cursor until the player’s first stroke in the tutorial. */
   private tutorialShootHint = false;
+  /** Level-0 career break: scripted ellipse “finger” + overlay until dismissed once (storage). */
+  private aimIntroActive = false;
+  private aimIntroPhase = 0;
+  private aimIntroDemoX = 0;
+  private aimIntroDemoY = 0;
+  /** Tutorial: aim intro once per match until “Got it” (not persisted). */
+  private tutorialAimIntroDismissedThisMatch = false;
+  /** Tutorial: oyuncunun attığı vuruş sayısı (ilk atışta nişan kilidi; 2. sıradan itibaren intro). */
+  private tutorialPlayerStrokesCompleted = 0;
+  /** İlk tutorial atışında `poolInput.aimAngle` sabit tutulur (döndürme yok). */
+  private tutorialFirstShotAimLockRad = 0;
+  /** Tutorial aim-intro: sweep starts from this aim; demo rotates 120° to the right only (no swing past center to the left). */
+  private tutorialAimIntroSweepCenterRad = 0;
+
+  /** Tutorial aim-intro: after the first ball is potted, wait this many seconds before intro can show. */
+  private tutorialAimIntroFirstPotHoldSec = 0;
+  /** Tutorial: first pocket of the match has started the aim-intro delay (once per match). */
+  private tutorialAimIntroFirstPotDelayApplied = false;
+
+  /** Tutorial: “pocket the 8” full-screen step (same HUD shell as aim intro). */
+  private tutorialEightBallIntroActive = false;
+  private tutorialEightBallIntroDismissedThisMatch = false;
 
   /** Center “reaction portrait” moment (TTL); cleared with match / dialogue tick cadence. */
   private opponentReaction: {
@@ -230,6 +253,185 @@ export class GameEngine implements Game {
 
   private writeTutorialCompleted(): void {
     this.storage.setItem(TUTORIAL_STORAGE_KEY, '1');
+  }
+
+  private readAimIntroDismissed(): boolean {
+    return this.storage.getItem(AIM_INTRO_STORAGE_KEY) === '1';
+  }
+
+  private writeAimIntroDismissed(): void {
+    this.storage.setItem(AIM_INTRO_STORAGE_KEY, '1');
+  }
+
+  /** True while full-screen aim / 8-ball tutorial UI blocks play, or tutorial “wait” after first pot before aim intro. */
+  isAimIntroActive(): boolean {
+    return (
+      this.aimIntroActive ||
+      this.tutorialEightBallIntroActive ||
+      (this.tutorialActive && this.tutorialAimIntroFirstPotHoldSec > 0)
+    );
+  }
+
+  /**
+   * Freeze the player shot countdown while teaching UI is active, tutorial wait between beats, or blocking dialogue.
+   */
+  private isPlayerShotClockPaused(): boolean {
+    if (this.phase !== 'PlayerTurn') return false;
+    if (this.isAimIntroActive()) return true;
+    if (!this.tutorialActive) return false;
+    return (
+      this.tutorialOpeningCameraActive ||
+      this.tutorialShootHint ||
+      this.opponentReaction != null ||
+      this.hudNotice != null ||
+      this.dialogue.getBubble() != null
+    );
+  }
+
+  private dismissAimIntro(): void {
+    if (!this.aimIntroActive) return;
+    const wasTutorial = this.tutorialActive;
+    this.aimIntroActive = false;
+    if (wasTutorial) {
+      this.tutorialAimIntroDismissedThisMatch = true;
+      this.syncTutorialInitialAimTowardFirstTargetBall();
+    } else {
+      this.writeAimIntroDismissed();
+    }
+    this.refreshTutorialEightBallIntroEligibility();
+  }
+
+  private dismissTutorialEightBallIntro(): void {
+    if (!this.tutorialEightBallIntroActive) return;
+    this.tutorialEightBallIntroActive = false;
+    this.tutorialEightBallIntroDismissedThisMatch = true;
+  }
+
+  /** After aim intro / turn changes, show tutorial “pocket the 8” overlay when appropriate. */
+  private refreshTutorialEightBallIntroEligibility(): void {
+    if (!this.tutorialActive) {
+      this.tutorialEightBallIntroActive = false;
+      return;
+    }
+    this.tutorialEightBallIntroActive =
+      this.phase === 'PlayerTurn' &&
+      this.activePlayer === 'player' &&
+      this.physics.cue.active &&
+      !this.awaitingBallInHandPlacement &&
+      !this.tutorialEightBallIntroDismissedThisMatch &&
+      !this.aimIntroActive &&
+      this.playerIsOnEightBallOnly();
+  }
+
+  /**
+   * Aim-intro hand on felt: farther along the aim line than the cue tip, offset to the cue’s right
+   * (perpendicular to aim in table space).
+   */
+  private aimIntroFingerTablePos(cue: { pos: { x: number; y: number }; radius: number }, aimRad: number): {
+    x: number;
+    y: number;
+  } {
+    const reach = cue.radius * 8.1;
+    const side = cue.radius * 2.55;
+    const c = Math.cos(aimRad);
+    const s = Math.sin(aimRad);
+    return {
+      x: cue.pos.x + reach * c + side * s,
+      y: cue.pos.y + reach * s - side * c,
+    };
+  }
+
+  private initAimIntroDemoPose(): void {
+    this.aimIntroPhase = 0;
+    const cue = this.physics.cue;
+    if (this.tutorialActive) {
+      this.syncTutorialInitialAimTowardFirstTargetBall();
+      this.tutorialAimIntroSweepCenterRad = this.poolInput.aimAngle;
+      this.aimIntroPhase = -Math.PI / 2;
+      const theta = this.tutorialAimIntroSweepCenterRad;
+      const f = this.aimIntroFingerTablePos(cue, theta);
+      this.aimIntroDemoX = f.x;
+      this.aimIntroDemoY = f.y;
+      this.poolInput.aimAngle = theta;
+      return;
+    }
+    const rx = cue.radius * 5.4;
+    const ry = cue.radius * 3.65;
+    const px = cue.pos.x + rx;
+    const py = cue.pos.y;
+    const theta = Math.atan2(py - cue.pos.y, px - cue.pos.x);
+    const f = this.aimIntroFingerTablePos(cue, theta);
+    this.aimIntroDemoX = f.x;
+    this.aimIntroDemoY = f.y;
+    this.poolInput.aimAngle = theta;
+  }
+
+  /**
+   * Tutorial: no intro on first shot (aim locked); after first stroke, aim intro once per match (sweep demo).
+   * Career level 0 first break: once per device until dismissed (ellipse demo).
+   */
+  private refreshAimIntroEligibility(): void {
+    const was = this.aimIntroActive;
+    let eligible = false;
+    if (this.tutorialActive) {
+      eligible =
+        this.phase === 'PlayerTurn' &&
+        this.physics.cue.active &&
+        !this.awaitingBallInHandPlacement &&
+        !this.tutorialAimIntroDismissedThisMatch &&
+        this.tutorialPlayerStrokesCompleted >= 1 &&
+        this.tutorialAimIntroFirstPotHoldSec <= 0 &&
+        !this.tutorialEightBallIntroActive;
+    } else {
+      eligible =
+        this.phase === 'PlayerTurn' &&
+        this.levelIndex === 0 &&
+        this.tournament == null &&
+        this.awaitingFirstPlayerBreakShot &&
+        this.physics.cue.active &&
+        !this.readAimIntroDismissed();
+    }
+    this.aimIntroActive = eligible;
+    if (eligible && !was) this.initAimIntroDemoPose();
+  }
+
+  private tickAimIntroDemo(dt: number): void {
+    if (!this.aimIntroActive || this.phase !== 'PlayerTurn') return;
+    const cue = this.physics.cue;
+    if (!cue.active) return;
+    if (this.tutorialActive) {
+      this.aimIntroPhase += dt * 1.05;
+      /** 120° total, only clockwise from center (no excursion left of initial aim). */
+      const sweepRad = (120 * Math.PI) / 180;
+      const t = 0.5 + 0.5 * Math.sin(this.aimIntroPhase);
+      const theta = this.tutorialAimIntroSweepCenterRad + sweepRad * t;
+      const f = this.aimIntroFingerTablePos(cue, theta);
+      this.aimIntroDemoX = f.x;
+      this.aimIntroDemoY = f.y;
+      this.poolInput.aimAngle = theta;
+      return;
+    }
+    this.aimIntroPhase += dt * 0.95;
+    const u = this.aimIntroPhase;
+    const rx = cue.radius * 5.4;
+    const ry = cue.radius * 3.65;
+    const px = cue.pos.x + rx * Math.cos(u);
+    const py = cue.pos.y + ry * Math.sin(u);
+    const theta = Math.atan2(py - cue.pos.y, px - cue.pos.x);
+    const f = this.aimIntroFingerTablePos(cue, theta);
+    this.aimIntroDemoX = f.x;
+    this.aimIntroDemoY = f.y;
+    this.poolInput.aimAngle = theta;
+  }
+
+  private filterAimIntroPoolCommands(commands: readonly GameInputCommand[]): GameInputCommand[] {
+    if (!this.isAimIntroActive()) return [...commands];
+    const out: GameInputCommand[] = [];
+    for (const c of commands) {
+      if (c.type === 'pointer.table' || c.type === 'power.drag' || c.type === 'spin.set') continue;
+      out.push(c);
+    }
+    return out;
   }
 
   private resetPlayerSpin(): void {
@@ -549,6 +751,8 @@ export class GameEngine implements Game {
     this.aiCameraBlend = 0;
     this.aiCameraBlendTarget = 0;
     this.pushMusicStart(this.pickRandomMatchBgmId());
+    this.refreshAimIntroEligibility();
+    this.refreshTutorialEightBallIntroEligibility();
   }
 
   /**
@@ -556,6 +760,12 @@ export class GameEngine implements Game {
    * Skips the main menu until the match is left via the normal end card (then `writeTutorialCompleted`).
    */
   private beginTutorialMatch(): void {
+    this.tutorialAimIntroDismissedThisMatch = false;
+    this.tutorialAimIntroFirstPotHoldSec = 0;
+    this.tutorialAimIntroFirstPotDelayApplied = false;
+    this.tutorialEightBallIntroDismissedThisMatch = false;
+    this.tutorialEightBallIntroActive = false;
+    this.tutorialPlayerStrokesCompleted = 0;
     this.tutorialActive = true;
     this.tutorialShootHint = true;
     this.levelIndex = 0;
@@ -596,7 +806,10 @@ export class GameEngine implements Game {
     this.phase = 'PlayerTurn';
     this.eventQueue.length = 0;
     this.syncTutorialInitialAimTowardFirstTargetBall();
+    this.tutorialFirstShotAimLockRad = this.poolInput.aimAngle;
     this.pushMusicStart(this.pickRandomMatchBgmId());
+    this.refreshAimIntroEligibility();
+    this.refreshTutorialEightBallIntroEligibility();
   }
 
   /** Aim the cue at solid 1 before the player moves — tutorial intro line. */
@@ -686,6 +899,7 @@ export class GameEngine implements Game {
 
   private requestPlayerShot(angle: number, power01: number, spinX: number, spinY: number): boolean {
     if (this.phase !== 'PlayerTurn') return false;
+    if (this.isAimIntroActive()) return false;
     if (!this.physics.cue.active) return false;
     const cueStats = this.findCue(this.profile.equippedCueId)?.stats ?? { power: 1, aim: 1, spin: 1 };
     const isOpeningBreak = this.awaitingFirstPlayerBreakShot;
@@ -711,6 +925,9 @@ export class GameEngine implements Game {
       this.aiCameraBlend = 1;
       this.aiCameraBlendTarget = 0;
       this.openingShotCameraReturnActive = true;
+    }
+    if (this.tutorialActive) {
+      this.tutorialPlayerStrokesCompleted += 1;
     }
     this.physics.applyShot(angle, p, spinX, spinY);
     this.resetPlayerSpin();
@@ -750,7 +967,15 @@ export class GameEngine implements Game {
   update(dt: number, commands: readonly GameInputCommand[] = []): void {
     this.applyMenuCommands(commands);
 
-    const commandsForPool = this.filterBallInHandPointerCommands(commands);
+    if (this.tutorialActive && this.tutorialAimIntroFirstPotHoldSec > 0) {
+      const prev = this.tutorialAimIntroFirstPotHoldSec;
+      this.tutorialAimIntroFirstPotHoldSec = Math.max(0, prev - dt);
+      if (prev > 0 && this.tutorialAimIntroFirstPotHoldSec <= 0) {
+        this.refreshAimIntroEligibility();
+      }
+    }
+
+    const commandsForPool = this.filterAimIntroPoolCommands(this.filterBallInHandPointerCommands(commands));
 
     this.poolInput.applyCommands(commandsForPool, {
       phaseIsPlayerTurn:
@@ -780,6 +1005,23 @@ export class GameEngine implements Game {
       getSpin: () => ({ x: this.spinX, y: this.spinY }),
     });
 
+    if (this.tutorialActive && this.tutorialAimIntroFirstPotHoldSec > 0) {
+      this.poolInput.aimDragging = false;
+      this.poolInput.resetStroke();
+    }
+
+    if (
+      this.tutorialActive &&
+      this.tutorialPlayerStrokesCompleted === 0 &&
+      this.phase === 'PlayerTurn' &&
+      !this.awaitingBallInHandPlacement &&
+      !this.opponentReaction
+    ) {
+      this.poolInput.aimAngle = this.tutorialFirstShotAimLockRad;
+    }
+
+    this.tickAimIntroDemo(dt);
+
     this.dialogue.tick(dt);
     if (this.opponentReaction) {
       this.opponentReaction.ttl -= dt;
@@ -797,14 +1039,16 @@ export class GameEngine implements Game {
     if (this.phase === 'MainMenu' || this.phase === 'MatchEnd') return;
 
     if (this.phase === 'PlayerTurn') {
-      const lowTime = this.turnClock.progress01() < 0.22;
-      if (lowTime && !this.pressureSent && !this.awaitingBallInHandPlacement) {
-        void this.tryDialogue('pressure', this.getOpponent());
-        this.pressureSent = true;
-      }
-      if (this.turnClock.tick(dt)) {
-        const shooter: PlayerId = 'player';
-        this.resolveTurn(resolveTurnTimeout(shooter), shooter, undefined);
+      if (!this.isPlayerShotClockPaused()) {
+        const lowTime = this.turnClock.progress01() < 0.22;
+        if (lowTime && !this.pressureSent && !this.awaitingBallInHandPlacement) {
+          void this.tryDialogue('pressure', this.getOpponent());
+          this.pressureSent = true;
+        }
+        if (this.turnClock.tick(dt)) {
+          const shooter: PlayerId = 'player';
+          this.resolveTurn(resolveTurnTimeout(shooter), shooter, undefined);
+        }
       }
       return;
     }
@@ -975,6 +1219,15 @@ export class GameEngine implements Game {
         setTimeout(() => this.pushSound(AssetIds.soundPocket, 0.22), 320);
       }
     }
+    if (
+      shot &&
+      this.tutorialActive &&
+      shot.potted.length > 0 &&
+      !this.tutorialAimIntroFirstPotDelayApplied
+    ) {
+      this.tutorialAimIntroFirstPotDelayApplied = true;
+      this.tutorialAimIntroFirstPotHoldSec = 2 + Math.random();
+    }
     this.lastHudReason = res.reason;
     this.maybeTaunt(res, shooter, shot);
     this.emitTurnNotices(res);
@@ -1104,6 +1357,9 @@ export class GameEngine implements Game {
     ) {
       this.maybePortraitLastBallReactionOnPlayerTurnStart();
     }
+
+    this.refreshAimIntroEligibility();
+    this.refreshTutorialEightBallIntroEligibility();
   }
 
   private playerIsOnEightBallOnly(): boolean {
@@ -1119,6 +1375,7 @@ export class GameEngine implements Game {
 
   /** First time per rack the player aims with only the 8 left to legally shoot (once per match). */
   private maybePortraitLastBallReactionOnPlayerTurnStart(): void {
+    if (this.aimIntroActive || this.tutorialEightBallIntroActive) return;
     if (this.opponentReaction) return;
     if (this.portraitLastBallReactionUsed) return;
     if (!this.playerIsOnEightBallOnly()) return;
@@ -1156,6 +1413,7 @@ export class GameEngine implements Game {
   ): void {
     const oid = this.getOpponent().id;
     if (!hasPortraitReactionOpponent(oid)) return;
+    if (this.aimIntroActive || this.tutorialEightBallIntroActive) return;
     if (this.opponentReaction) return;
     const p = opts.force ? 1 : (opts.reactionProb ?? 0.36);
     if (Math.random() > p) return;
@@ -1612,7 +1870,8 @@ export class GameEngine implements Game {
           snap.phase === 'PlayerTurn' &&
           !this.opponentReaction &&
           !this.awaitingBallInHandPlacement &&
-          this.physics.cue.active,
+          this.physics.cue.active &&
+          !this.isAimIntroActive(),
         tutorialShootHint:
           this.tutorialShootHint &&
           this.tutorialActive &&
@@ -1620,7 +1879,18 @@ export class GameEngine implements Game {
           snap.phase === 'PlayerTurn' &&
           !this.opponentReaction &&
           !this.awaitingBallInHandPlacement &&
-          this.physics.cue.active,
+          this.physics.cue.active &&
+          !this.isAimIntroActive(),
+        powerBarPull01:
+          snap.phase === 'PlayerTurn' &&
+          this.activePlayer === 'player' &&
+          !this.opponentReaction &&
+          !this.awaitingBallInHandPlacement &&
+          this.physics.cue.active &&
+          !this.isAimIntroActive() &&
+          this.poolInput.strokeMode === 'charge'
+            ? this.poolInput.getChargeVisual()
+            : 0,
         matchEndOpponentPortrait:
           snap.phase === 'MatchEnd' ? this.matchEndOpponentPortrait : null,
         hudNotice: this.hudNotice
@@ -1631,6 +1901,40 @@ export class GameEngine implements Game {
               durationSec: this.hudNotice.durationTotal,
             }
           : null,
+        aimIntro:
+          this.aimIntroActive &&
+          snap.phase === 'PlayerTurn' &&
+          !this.awaitingBallInHandPlacement &&
+          this.physics.cue.active
+            ? this.tutorialActive
+              ? {
+                  visible: true,
+                  title: 'Aim your shot',
+                  body: 'Drag on the table to turn the cue. The hand is a hint—the cue follows.',
+                  confirmLabel: 'Got it',
+                }
+              : {
+                  visible: true,
+                  title: 'How to aim',
+                  body: 'Drag on the table around the cue ball. Tap Got it to continue.',
+                  confirmLabel: 'Got it',
+                }
+            : undefined,
+        eightBallIntro:
+          this.tutorialEightBallIntroActive &&
+          this.tutorialActive &&
+          snap.phase === 'PlayerTurn' &&
+          this.activePlayer === 'player' &&
+          !this.awaitingBallInHandPlacement &&
+          this.physics.cue.active
+            ? {
+                visible: true,
+                title: 'Pocket the 8',
+                body:
+                  'Your group is cleared. Aim by dragging on the table—line the 8 toward the pocket you want, then shoot from the power bar.',
+                confirmLabel: 'Got it',
+              }
+            : undefined,
       },
       cueBallInHandCursorHint:
         this.awaitingBallInHandPlacement && this.phase === 'PlayerTurn' && this.physics.cue.active,
@@ -1876,6 +2180,22 @@ export class GameEngine implements Game {
       renderLayer: 'vfx',
     });
 
+    if (this.aimIntroActive && cue.active && this.phase === 'PlayerTurn') {
+      const aimYHint = cue.radius + 0.2;
+      const wx = this.aimIntroDemoX - tw / 2;
+      const wz = this.aimIntroDemoY - th / 2;
+      objects.push({
+        objectId: 'aimIntro.demoCursor',
+        templateId: AssetIds.aimIntroFinger,
+        /** Sprite scales in scene units; keep group scale at 1. */
+        transform: transformAt(vec3(wx, aimYHint, wz), uniformScale(1)),
+        visible: true,
+        lifetime: 'persistent',
+        replication: 'localCosmetic',
+        renderLayer: 'vfx',
+      });
+    }
+
     const polylines: PolylineObjectState[] = [];
     if (showAim) {
       const preview = computeAimPreview(this.physics.balls, cue, effectiveAim, this.rulesCtx);
@@ -2007,6 +2327,7 @@ export class GameEngine implements Game {
         } else {
           /** Boş alana tık: beyazı taşımadan onay (ör. mutfak konumu uygunsa). */
           this.awaitingBallInHandPlacement = false;
+          this.refreshAimIntroEligibility();
         }
         continue;
       }
@@ -2019,6 +2340,7 @@ export class GameEngine implements Game {
           this.physics.moveCueBallForBallInHand(tableX, tableY);
           this.ballInHandDragging = false;
           this.awaitingBallInHandPlacement = false;
+          this.refreshAimIntroEligibility();
         }
         continue;
       }
@@ -2032,6 +2354,14 @@ export class GameEngine implements Game {
 
   private applyMenuCommands(commands: readonly GameInputCommand[]): void {
     for (const c of commands) {
+      if (c.type === 'aimIntro.dismiss') {
+        this.dismissAimIntro();
+        continue;
+      }
+      if (c.type === 'tutorialEightIntro.dismiss') {
+        this.dismissTutorialEightBallIntro();
+        continue;
+      }
       if (c.type === 'menu.restart') {
         if (this.tutorialActive) {
           this.writeTutorialCompleted();
@@ -2073,6 +2403,8 @@ export class GameEngine implements Game {
       } else if (c.type === 'tournament.exit') {
         this.tournament = null;
         this.phase = 'MainMenu';
+        this.aimIntroActive = false;
+        this.tutorialEightBallIntroActive = false;
         this.turnClock.stop();
         this.eventQueue.length = 0;
         this.pushMusicStart(AssetIds.musicBgBetweenGames);

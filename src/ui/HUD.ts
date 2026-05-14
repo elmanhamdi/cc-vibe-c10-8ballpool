@@ -119,6 +119,8 @@ export class HUD {
   private readonly tournamentTitleRow: HTMLElement;
   private readonly tournamentStartBtn: HTMLButtonElement;
   private readonly tournamentStartLabel: HTMLElement;
+  private readonly tournamentEntryFeeEl: HTMLElement;
+  private readonly tournamentEntryFeeNumEl: HTMLElement;
   private readonly tournamentExitBtn: HTMLButtonElement;
   private tournamentVisible = false;
   /** Top-of-match strip showing tournament name + bracket dots + counter. */
@@ -143,7 +145,6 @@ export class HUD {
   private readonly menuAccountFill: HTMLElement;
   private readonly menuAccountText: HTMLElement;
   private readonly menuCoinAmount: HTMLElement;
-  private readonly menuPlayLabel: HTMLElement;
   private readonly menuPlayBtn: HTMLButtonElement;
   private readonly menuTournamentsBtn: HTMLButtonElement;
   private readonly menuLeaderboardBtn: HTMLButtonElement;
@@ -182,6 +183,12 @@ export class HUD {
   private lastSpinPadTapMs = 0;
   private lastSpinPadTapLen = 10;
   private readonly storage: StorageAdapter | null;
+  private readonly aimIntroOverlay: HTMLElement;
+  private readonly aimIntroTitle: HTMLElement;
+  private readonly aimIntroBody: HTMLElement;
+  private readonly aimIntroConfirm: HTMLButtonElement;
+  /** In-game currency uses `public/ui/money.png` everywhere (replaces legacy coin emoji / glyph). */
+  private readonly coinIconUrl: string;
 
   constructor(
     root: HTMLElement,
@@ -195,6 +202,7 @@ export class HUD {
       storage?: StorageAdapter;
     },
   ) {
+    this.coinIconUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/money.png');
     this.root = root;
     this.storage = opts?.storage ?? null;
     this.gameRoot = root.parentElement?.id === 'game-root' ? root.parentElement : null;
@@ -226,22 +234,15 @@ export class HUD {
       </div>
       <div class="menu-actions">
         <div class="menu-primary-btns">
-          <button id="menu-btn-play" class="menu-play-btn interactive" aria-label="Casual — pick a quick match">
-            <span class="menu-play-glyph" aria-hidden="true"></span>
-            <span class="menu-play-label" id="menu-play-label">Play</span>
-          </button>
-          <button id="menu-btn-tournaments" class="menu-tournaments-btn interactive" aria-label="Tournaments">
-            <span class="menu-tournaments-glyph" aria-hidden="true"></span>
-          </button>
+          <button id="menu-btn-play" class="menu-play-btn interactive" type="button" aria-label="Casual — pick a quick match"></button>
+          <button id="menu-btn-tournaments" class="menu-tournaments-btn interactive" type="button" aria-label="Tournaments"></button>
+          <button id="menu-btn-shop" class="menu-shop-main-btn interactive" type="button" aria-label="Shop"></button>
         </div>
-        <div class="menu-circle-row">
-          <button class="menu-circle-btn interactive" id="menu-circle-leaderboard" aria-label="Leaderboard">
+        <div class="menu-circle-row menu-circle-row--pair">
+          <button class="menu-circle-btn interactive" id="menu-circle-leaderboard" type="button" aria-label="Leaderboard">
             <span class="menu-circle-icon menu-icon-trophy" aria-hidden="true"></span>
           </button>
-          <button class="menu-circle-btn interactive" id="menu-circle-shop" aria-label="Shop">
-            <span class="menu-circle-icon menu-icon-shop" aria-hidden="true"></span>
-          </button>
-          <button class="menu-circle-btn interactive" id="menu-circle-achievements" aria-label="Achievements">
+          <button class="menu-circle-btn interactive" id="menu-circle-achievements" type="button" aria-label="Achievements">
             <span class="menu-circle-icon menu-icon-medal" aria-hidden="true"></span>
           </button>
         </div>
@@ -267,8 +268,9 @@ export class HUD {
                   </div>
                 </div>
               </div>
-              <div class="hud-pot-below-name" aria-hidden="true">
+              <div class="hud-pot-below-name hud-pot-below-name--ai" aria-hidden="true">
                 <div id="pot-chips-left" class="pot-chips pot-chips--under-name pot-chips-end"></div>
+                <div id="pot-opponent-group-label" class="pot-opponent-group-label"></div>
               </div>
             </div>
           </div>
@@ -283,9 +285,28 @@ export class HUD {
               </div>
               <img class="hud-vs-flare" src="${new URL('./vs.png', import.meta.url).href}" alt="" decoding="async" draggable="false" />
               <div class="hud-duel-side hud-duel-side--pl">
-                <div class="avatar-frame interactive" id="pl-avatar-frame" aria-hidden="true">
-                  <div class="avatar-inner">
-                    <img id="pl-avatar-img" class="avatar-photo" src="${resolveBrowserAssetUrl(this.assetBaseUrl, AssetManifest['ui.avatar.player'].browserUrl)}" alt="" decoding="async" />
+                <div class="hud-duel-pl-anchor">
+                  <div class="avatar-frame interactive" id="pl-avatar-frame" aria-hidden="true">
+                    <div class="avatar-inner">
+                      <img id="pl-avatar-img" class="avatar-photo" src="${resolveBrowserAssetUrl(this.assetBaseUrl, AssetManifest['ui.avatar.player'].browserUrl)}" alt="" decoding="async" />
+                    </div>
+                  </div>
+                  <div class="hud-your-turn-indicator-float">
+                    <div
+                      class="hud-your-turn-indicator"
+                      id="hud-your-turn-indicator"
+                      hidden
+                      data-active="false"
+                      role="status"
+                      aria-live="polite"
+                      aria-atomic="true"
+                    >
+                      <span class="hud-your-turn-indicator__bloom" aria-hidden="true"></span>
+                      <span class="hud-your-turn-indicator__inner">
+                        <span class="hud-your-turn-indicator__shine" aria-hidden="true"></span>
+                        <span class="hud-your-turn-indicator__text">YOUR TURN!</span>
+                      </span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -315,6 +336,7 @@ export class HUD {
               </div>
               <div class="hud-pot-below-name hud-pot-below-name--pl" aria-hidden="true">
                 <div id="pot-chips-right" class="pot-chips pot-chips--under-name"></div>
+                <div id="pot-player-group-label" class="pot-player-group-label"></div>
               </div>
             </div>
           </div>
@@ -362,11 +384,11 @@ export class HUD {
         </div>
         <div id="end-champion-prize" class="end-champion-prize" data-active="false" aria-hidden="true">
           <div class="prize-earned">
-            <div class="prize-earned-coin" id="champion-earned-coin">+0 🪙</div>
+            <div class="prize-earned-coin" id="champion-earned-coin"><span class="prize-earned-coin-amount">+0</span><img class="hud-inline-coin-icon hud-inline-coin-icon--prize" src="${escapeHtml(this.coinIconUrl)}" alt="" width="34" height="34" decoding="async" draggable="false" /></div>
             <div class="prize-earned-xp" id="champion-earned-xp">+0 XP</div>
           </div>
           <div class="prize-totals">
-            <span class="prize-total-chip" id="champion-total-coin">0 🪙</span>
+            <span class="prize-total-chip prize-total-chip--coin" id="champion-total-coin">0<img class="hud-inline-coin-icon hud-inline-coin-icon--total" src="${escapeHtml(this.coinIconUrl)}" alt="" width="22" height="22" decoding="async" draggable="false" /></span>
             <span class="prize-total-sep" aria-hidden="true">·</span>
             <span class="prize-total-chip" id="champion-total-xp">Lv 1 · 0 XP</span>
           </div>
@@ -465,13 +487,12 @@ export class HUD {
 
     this.shopOverlay = el('div', 'hud-shop-overlay');
     const shopBannerArt = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/shop_brainrot.png');
-    const panelBannerBg = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/bg.jpg');
     this.shopOverlay.innerHTML = `
       <div class="hud-shop-backdrop" id="hud-shop-backdrop"></div>
       <div class="hud-shop-modal">
         <div class="hud-shop-topbar">
           <div class="hud-shop-title">Cue Shop</div>
-          <div class="hud-shop-balance" id="hud-shop-coins">0 🪙</div>
+          <div class="hud-shop-balance" id="hud-shop-coins">0<img class="hud-inline-coin-icon hud-inline-coin-icon--shop-bar" src="${escapeHtml(this.coinIconUrl)}" alt="" width="22" height="22" decoding="async" draggable="false" /></div>
           <button class="hud-shop-close" id="hud-shop-close" aria-label="Close shop">×</button>
         </div>
         <div class="hud-shop-banner" aria-hidden="true">
@@ -492,9 +513,6 @@ export class HUD {
           <div class="hud-shop-balance hud-lb-top-pill">Online ranking — coming soon</div>
           <button class="hud-shop-close" id="hud-leaderboard-close" type="button" aria-label="Close leaderboard">×</button>
         </div>
-        <div class="hud-leaderboard-banner hud-shop-banner" aria-hidden="true">
-          <img class="hud-shop-banner-img" src="${panelBannerBg}" alt="" decoding="async" draggable="false" />
-        </div>
         <div class="hud-leaderboard-grid hud-shop-grid" id="hud-leaderboard-list"></div>
       </div>
     `;
@@ -509,9 +527,6 @@ export class HUD {
           <div class="hud-shop-balance" id="hud-achievements-sub">0 / 0 unlocked</div>
           <button class="hud-shop-close" id="hud-achievements-close" type="button" aria-label="Close achievements">×</button>
         </div>
-        <div class="hud-achievements-banner hud-shop-banner" aria-hidden="true">
-          <img class="hud-shop-banner-img" src="${panelBannerBg}" alt="" decoding="async" draggable="false" />
-        </div>
         <div class="hud-achievements-grid hud-shop-grid" id="hud-achievements-list"></div>
       </div>
     `;
@@ -524,9 +539,8 @@ export class HUD {
     this.menuCoinAmount = this.menu.querySelector('#menu-coin-amount') as HTMLElement;
     this.menuPlayBtn = this.menu.querySelector('#menu-btn-play') as HTMLButtonElement;
     this.menuTournamentsBtn = this.menu.querySelector('#menu-btn-tournaments') as HTMLButtonElement;
-    this.menuPlayLabel = this.menu.querySelector('#menu-play-label') as HTMLElement;
     this.menuLeaderboardBtn = this.menu.querySelector('#menu-circle-leaderboard') as HTMLButtonElement;
-    this.menuShopBtn = this.menu.querySelector('#menu-circle-shop') as HTMLButtonElement;
+    this.menuShopBtn = this.menu.querySelector('#menu-btn-shop') as HTMLButtonElement;
     this.menuAchievementsBtn = this.menu.querySelector('#menu-circle-achievements') as HTMLButtonElement;
 
     this.modeSelectOverlay = el('div', 'hud-modeselect-overlay');
@@ -577,7 +591,13 @@ export class HUD {
         <button class="hud-tournament-start interactive" id="hud-tournament-start" type="button" aria-label="Start Match 1">
           <span class="hud-tournament-start-inner">
             <img class="hud-tournament-start-plate" src="${tournamentPlayIcon}" alt="" decoding="async" draggable="false" />
-            <span id="hud-tournament-start-label" class="hud-tournament-start-label">Start Match 1</span>
+            <span class="hud-tournament-start-overlay-col">
+              <span id="hud-tournament-start-label" class="hud-tournament-start-label">Start Match 1</span>
+              <span id="hud-tournament-entry-fee" class="hud-tournament-entry-fee" hidden aria-live="polite">
+                <span id="hud-tournament-entry-fee-num" class="hud-tournament-entry-fee-num"></span>
+                <img class="hud-tournament-entry-fee-coin" src="${escapeHtml(this.coinIconUrl)}" alt="" width="24" height="24" decoding="async" draggable="false" />
+              </span>
+            </span>
           </span>
         </button>
       </div>
@@ -587,6 +607,8 @@ export class HUD {
     this.tournamentTitleRow = this.tournamentOverlay.querySelector('#hud-tournament-title-row') as HTMLElement;
     this.tournamentStartBtn = this.tournamentOverlay.querySelector('#hud-tournament-start') as HTMLButtonElement;
     this.tournamentStartLabel = this.tournamentOverlay.querySelector('#hud-tournament-start-label') as HTMLElement;
+    this.tournamentEntryFeeEl = this.tournamentOverlay.querySelector('#hud-tournament-entry-fee') as HTMLElement;
+    this.tournamentEntryFeeNumEl = this.tournamentOverlay.querySelector('#hud-tournament-entry-fee-num') as HTMLElement;
     this.tournamentExitBtn = this.tournamentOverlay.querySelector('#hud-tournament-exit') as HTMLButtonElement;
 
     this.nextModal = el('div', 'hud-next-overlay');
@@ -703,7 +725,7 @@ export class HUD {
     tutImg.className = 'hud-tutorial-power-drag-img';
     tutImg.alt = '';
     tutImg.decoding = 'async';
-    tutImg.src = new URL('./hand-cursor-tap.png', import.meta.url).href;
+    tutImg.src = new URL('./hand-cursor-tap-flipped.png', import.meta.url).href;
     tutImg.addEventListener(
       'error',
       () => {
@@ -722,23 +744,40 @@ export class HUD {
     const menuLogoUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/8ballslogo.png');
     this.menu.style.setProperty('--menu-hero-logo-image', `url("${menuLogoUrl}")`);
 
-    /** Round action buttons — Leaderboard / Shop / Achievements ball art. */
+    /** Secondary row — Leaderboard / Achievements (shop moved to main banner stack). */
     const btnLeaderboardUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/button_leaderboards.png');
-    const btnShopUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/button_shop.png');
     const btnAchievementsUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/button_achivement.png');
     this.menu.style.setProperty('--menu-circle-leaderboard-image', `url("${btnLeaderboardUrl}")`);
-    this.menu.style.setProperty('--menu-circle-shop-image', `url("${btnShopUrl}")`);
     this.menu.style.setProperty('--menu-circle-achievements-image', `url("${btnAchievementsUrl}")`);
 
-    /** Play button — yellow pill art with built-in play arrow. */
-    const btnPlayUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/button_play.png');
+    const btnPlayUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/Button_Play_new.png');
     this.menu.style.setProperty('--menu-play-image', `url("${btnPlayUrl}")`);
 
-    const btnTournamentsUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/button_play_tournaments.png');
+    const btnTournamentsUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/Button_Tournaments_new.png');
     this.menu.style.setProperty('--menu-tournaments-image', `url("${btnTournamentsUrl}")`);
 
-    const menuCoinIconUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/money.png');
-    this.menu.style.setProperty('--menu-coin-icon-image', `url("${menuCoinIconUrl}")`);
+    const btnShopMainUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/Button_Shop_new.png');
+    this.menu.style.setProperty('--menu-shop-main-image', `url("${btnShopMainUrl}")`);
+
+    this.menu.style.setProperty('--menu-coin-icon-image', `url("${this.coinIconUrl}")`);
+
+    this.aimIntroOverlay = el('div', 'hud-aim-intro-overlay');
+    this.aimIntroOverlay.setAttribute('role', 'dialog');
+    this.aimIntroOverlay.setAttribute('aria-modal', 'true');
+    this.aimIntroOverlay.setAttribute('aria-hidden', 'true');
+    this.aimIntroOverlay.innerHTML = `
+      <div class="hud-aim-intro-backdrop" aria-hidden="true"></div>
+      <div class="hud-aim-intro-panel">
+        <div class="hud-aim-intro-top">
+          <h2 class="hud-aim-intro-title" id="aim-intro-title"></h2>
+          <p class="hud-aim-intro-body" id="aim-intro-body"></p>
+        </div>
+        <button type="button" class="hud-aim-intro-confirm interactive" id="aim-intro-confirm">Got it</button>
+      </div>
+    `;
+    this.aimIntroTitle = this.aimIntroOverlay.querySelector('#aim-intro-title') as HTMLElement;
+    this.aimIntroBody = this.aimIntroOverlay.querySelector('#aim-intro-body') as HTMLElement;
+    this.aimIntroConfirm = this.aimIntroOverlay.querySelector('#aim-intro-confirm') as HTMLButtonElement;
 
     root.append(
       this.menu,
@@ -760,6 +799,7 @@ export class HUD {
       this.nextModal,
       this.soundBtn,
       this.powerBarWrap,
+      this.aimIntroOverlay,
     );
     this.soundMuted = this.opts?.isSoundMuted?.() ?? false;
     this.syncSoundButtonVisual();
@@ -773,6 +813,15 @@ export class HUD {
   }
 
   bindHandlers(): void {
+    this.aimIntroConfirm.addEventListener('click', () => {
+      this.playHudClickSound();
+      const eb = this.lastEightBall;
+      if (eb?.eightBallIntro?.visible) {
+        this.pushCommand({ type: 'tutorialEightIntro.dismiss' });
+      } else {
+        this.pushCommand({ type: 'aimIntro.dismiss' });
+      }
+    });
     this.btnNext.addEventListener('click', () => {
       this.playHudClickSound();
       const t = this.getHud().tournament;
@@ -1246,12 +1295,17 @@ export class HUD {
     const h = this.getHud();
     const eb = h.eightBall;
     if (!eb) {
+      this.syncYourTurnIndicator(false);
       this.applyPowerBarVisibility(h);
       this.hideSpinPopup();
       return;
     }
 
     const phase = eb.phase;
+    if (phase === 'MainMenu' || phase === 'MatchEnd') {
+      this.aimIntroOverlay.classList.remove('show');
+      this.aimIntroOverlay.setAttribute('aria-hidden', 'true');
+    }
     const opp = {
       id: eb.opponentId,
       name: eb.opponentName,
@@ -1300,6 +1354,7 @@ export class HUD {
       if (this.tournamentVisible) this.renderTournamentOverlay(h);
       if (this.modeSelectVisible) this.renderModeSelectPage(h);
       this.hideSpinPopup();
+      this.syncYourTurnIndicator(false);
       return;
     }
 
@@ -1323,6 +1378,7 @@ export class HUD {
       if (this.tournamentVisible) this.renderTournamentOverlay(h);
       if (this.modeSelectVisible) this.renderModeSelectPage(h);
       this.hideSpinPopup();
+      this.syncYourTurnIndicator(false);
       return;
     }
 
@@ -1337,6 +1393,20 @@ export class HUD {
     this.hideTournamentOverlay();
     this.hideModeSelectOverlay();
 
+    const fullScreenShotTutorialOn =
+      eb.aimIntro?.visible === true || eb.eightBallIntro?.visible === true;
+    if (fullScreenShotTutorialOn) {
+      this.hideSpinPopup();
+    }
+    this.aimIntroOverlay.classList.toggle('show', fullScreenShotTutorialOn);
+    this.aimIntroOverlay.setAttribute('aria-hidden', fullScreenShotTutorialOn ? 'false' : 'true');
+    const introCopy = eb.eightBallIntro?.visible ? eb.eightBallIntro : eb.aimIntro;
+    if (introCopy) {
+      this.aimIntroTitle.textContent = introCopy.title;
+      this.aimIntroBody.textContent = introCopy.body;
+      this.aimIntroConfirm.textContent = introCopy.confirmLabel;
+    }
+
     const t = eb.turnTime01;
     const plFrame = this.topStack.querySelector('#pl-avatar-frame') as HTMLElement;
     const aiFrame = this.topStack.querySelector('#ai-avatar-frame') as HTMLElement;
@@ -1348,6 +1418,7 @@ export class HUD {
     plFrame.classList.toggle('hot', playerRingOn && t < 0.22);
     aiFrame.classList.toggle('avatar-active', aiRingOn);
     aiFrame.classList.toggle('hot', aiRingOn && t < 0.22);
+    this.syncYourTurnIndicator(playerRingOn);
 
     this.topStack.querySelector('#pl-name')!.textContent = 'You';
     this.topStack.querySelector('#pl-lvl')!.textContent = levelLabel;
@@ -1426,7 +1497,11 @@ export class HUD {
     this.applySpinVisualFeedback(eb.spinX, eb.spinY);
 
     const canPickSpin =
-      eb.phase === 'PlayerTurn' && !h.cueBallInHandCursorHint && eb.activePlayer === 'player';
+      eb.phase === 'PlayerTurn' &&
+      !h.cueBallInHandCursorHint &&
+      eb.activePlayer === 'player' &&
+      !eb.aimIntro?.visible &&
+      !eb.eightBallIntro?.visible;
     this.spinOpenBtn.disabled = !canPickSpin;
     this.spinOpenBtn.style.opacity = canPickSpin ? '' : '0.5';
     if (this.spinPopupVisible && !canPickSpin) {
@@ -1458,7 +1533,9 @@ export class HUD {
       eb != null &&
       eb.phase === 'PlayerTurn' &&
       !h.cueBallInHandCursorHint &&
-      !eb.opponentReaction;
+      !eb.opponentReaction &&
+      !eb.aimIntro?.visible &&
+      !eb.eightBallIntro?.visible;
     if (!show) {
       this.powerBarWrap.style.display = 'none';
       this.powerBarWrap.classList.remove('hint');
@@ -1476,8 +1553,11 @@ export class HUD {
     this.tutorialPowerDrag.classList.toggle('show', tutShow);
     this.tutorialPowerDrag.setAttribute('aria-hidden', tutShow ? 'false' : 'true');
     if (!this.powerBarPointerDown) {
-      this.powerBarTrack.style.setProperty('--p', '0');
-      this.powerBarTrack.style.setProperty('--heat', '0');
+      const pull = Math.max(0, Math.min(1, eb.powerBarPull01 ?? 0));
+      this.powerBarTrack.style.setProperty('--p', String(pull));
+      this.powerBarTrack.style.setProperty('--heat', String(pull));
+      const handle = this.powerBarTrack.querySelector('.hud-power-handle') as HTMLElement;
+      handle?.setAttribute('aria-valuenow', String(Math.round(pull * 100)));
     }
   }
 
@@ -1497,32 +1577,41 @@ export class HUD {
   ): void {
     const isPlayer = kind === 'player';
     this.statsTitle.textContent = isPlayer ? 'Your stats' : `${eb.opponentName} stats`;
-    const entries: { label: string; value: string }[] = [];
+    const entries: { label: string; valueHtml: string }[] = [];
     if (isPlayer && profile) {
-      entries.push({ label: 'Coins', value: formatNumber(profile.coins) });
-      entries.push({ label: 'Rank', value: profile.rankName });
+      entries.push({
+        label: 'Coins',
+        valueHtml: `${formatNumber(profile.coins)}${this.coinIconImg('hud-inline-coin-icon hud-inline-coin-icon--stats', 16)}`,
+      });
+      entries.push({ label: 'Rank', valueHtml: escapeHtml(profile.rankName) });
       if (profile.nextRankName) {
         entries.push({
           label: 'Next rank',
-          value: `${profile.nextRankName} (${formatPercent(profile.rankProgress01)})`,
+          valueHtml: `${escapeHtml(profile.nextRankName)} (${escapeHtml(formatPercent(profile.rankProgress01))})`,
         });
       }
-      entries.push({ label: 'Wins', value: formatNumber(profile.wins) });
-      entries.push({ label: 'Losses', value: formatNumber(profile.losses) });
-      entries.push({ label: 'Win rate', value: formatPercent(profile.winRate) });
-      entries.push({ label: 'Streak', value: `${profile.currentStreak} (best ${profile.bestStreak})` });
+      entries.push({ label: 'Wins', valueHtml: escapeHtml(formatNumber(profile.wins)) });
+      entries.push({ label: 'Losses', valueHtml: escapeHtml(formatNumber(profile.losses)) });
+      entries.push({ label: 'Win rate', valueHtml: escapeHtml(formatPercent(profile.winRate)) });
+      entries.push({
+        label: 'Streak',
+        valueHtml: escapeHtml(`${profile.currentStreak} (best ${profile.bestStreak})`),
+      });
     } else {
-      entries.push({ label: 'Coins', value: '—' });
-      entries.push({ label: 'Rank', value: eb.opponentTier });
-      entries.push({ label: 'Accuracy', value: `${Math.round(eb.opponentAccuracy * 100)}%` });
-      entries.push({ label: 'Name', value: eb.opponentName });
+      entries.push({ label: 'Coins', valueHtml: escapeHtml('—') });
+      entries.push({ label: 'Rank', valueHtml: escapeHtml(eb.opponentTier) });
+      entries.push({
+        label: 'Accuracy',
+        valueHtml: escapeHtml(`${Math.round(eb.opponentAccuracy * 100)}%`),
+      });
+      entries.push({ label: 'Name', valueHtml: escapeHtml(eb.opponentName) });
     }
     this.statsList.innerHTML = entries
       .map(
         (e) => `
         <div class="hud-stats-row">
-          <span class="hud-stats-label">${e.label}</span>
-          <span class="hud-stats-value">${e.value}</span>
+          <span class="hud-stats-label">${escapeHtml(e.label)}</span>
+          <span class="hud-stats-value hud-stats-value--inline">${e.valueHtml}</span>
         </div>`,
       )
       .join('');
@@ -1567,7 +1656,7 @@ export class HUD {
     const owned = new Set(profile.ownedCueIds ?? []);
     const equipped = profile.equippedCueId;
     const coins = profile.coins ?? 0;
-    this.shopCoins.textContent = `${formatNumber(coins)} 🪙`;
+    this.shopCoins.innerHTML = `${formatNumber(coins)}${this.coinIconImg('hud-inline-coin-icon hud-inline-coin-icon--shop-bar', 22)}`;
     /** Skip rebuilds while shop closed or content unchanged so click delegation survives between mousedown/up. */
     const signature = `${coins}|${equipped}|${[...owned].sort().join(',')}|${catalog.map((c) => c.id).join(',')}`;
     const shopVisible = this.shopOverlay.classList.contains('show');
@@ -1583,21 +1672,30 @@ export class HUD {
         const isEquipped = equipped === item.id;
         const canBuy = coins >= item.price;
         let actionLabel = '';
+        let actionInnerHtml = '';
         let actionData = '';
         let actionDisabled = false;
         let ctaClasses = 'btn shop-cta';
         if (isOwned) {
           if (isEquipped) {
             actionLabel = 'Equipped';
+            actionInnerHtml = escapeHtml(actionLabel);
             ctaClasses += ' ghost shop-cta--equipped-state';
             actionDisabled = true;
           } else {
             actionLabel = 'Equip';
+            actionInnerHtml = escapeHtml(actionLabel);
             ctaClasses += ' primary shop-cta--equip';
             actionData = `data-equip="${item.id}"`;
           }
         } else {
-          actionLabel = item.price <= 0 ? 'Buy — Free' : `Buy — ${formatNumber(item.price)} 🪙`;
+          if (item.price <= 0) {
+            actionLabel = 'Buy — Free';
+            actionInnerHtml = escapeHtml(actionLabel);
+          } else {
+            actionLabel = `Buy — ${formatNumber(item.price)}`;
+            actionInnerHtml = `${escapeHtml(`Buy — ${formatNumber(item.price)}`)}${this.coinIconImg('hud-inline-coin-icon hud-inline-coin-icon--shop-cta', 18)}`;
+          }
           ctaClasses += canBuy ? ' primary shop-cta--buy' : ' ghost shop-cta--buy shop-cta--buy-off';
           actionData = `data-buy="${item.id}"`;
           actionDisabled = !canBuy;
@@ -1634,7 +1732,7 @@ export class HUD {
             <div class="shop-card-visual-block">
               <div class="shop-card-showcase">${showcaseInner}</div>
               <div class="shop-card-actions">
-                <button type="button" class="${ctaClasses}" ${actionData} ${actionDisabled ? 'data-disabled="true"' : ''}>${escapeHtml(actionLabel)}</button>
+                <button type="button" class="${ctaClasses}" ${actionData} ${actionDisabled ? 'data-disabled="true"' : ''}>${actionInnerHtml}</button>
               </div>
             </div>
           </div>
@@ -1643,16 +1741,29 @@ export class HUD {
       .join('');
   }
 
-  /** Quick staggered "I'm a button" pop on the four menu actions, fired each
-   *  time the main menu becomes visible. Targets the inner icon span on circle
-   *  buttons (their hover transform lives there) and the play button itself. */
+  /** Premium capsule above the player avatar when it is the player's shot. */
+  private syncYourTurnIndicator(active: boolean): void {
+    const el = this.topStack.querySelector('#hud-your-turn-indicator') as HTMLElement | null;
+    if (!el) return;
+    if (active) {
+      el.removeAttribute('hidden');
+      el.dataset.active = 'true';
+      el.setAttribute('aria-hidden', 'false');
+    } else {
+      el.setAttribute('hidden', '');
+      el.dataset.active = 'false';
+      el.setAttribute('aria-hidden', 'true');
+    }
+  }
+
+  /** Quick staggered "I'm a button" pop on menu actions when the hub opens. */
   private playMenuButtonAttention(): void {
     const targets: (HTMLElement | null)[] = [
-      this.menuLeaderboardBtn.querySelector('.menu-circle-icon'),
-      this.menuShopBtn.querySelector('.menu-circle-icon'),
-      this.menuAchievementsBtn.querySelector('.menu-circle-icon'),
       this.menuPlayBtn,
       this.menuTournamentsBtn,
+      this.menuShopBtn,
+      this.menuLeaderboardBtn.querySelector('.menu-circle-icon'),
+      this.menuAchievementsBtn.querySelector('.menu-circle-icon'),
     ];
     targets.forEach((el, i) => {
       if (!el) return;
@@ -1674,7 +1785,6 @@ export class HUD {
     this.menuAccountFill.style.setProperty('--p', `${Math.round(progress * 100)}%`);
     this.menuAccountText.textContent = `${formatNumber(xpInLevel)} / ${formatNumber(xpToNext)} EXP`;
     this.menuCoinAmount.textContent = formatNumber(coins);
-    this.menuPlayLabel.textContent = 'Play';
   }
 
   private renderLeaderboardOverlay(h: HudState): void {
@@ -1737,11 +1847,13 @@ export class HUD {
         const cls = r.unlocked ? 'ach-row ach-unlocked' : 'ach-row ach-locked';
         const pct = Math.round(r.progress01 * 100);
         const reward = r.def.rewardLabel ? `<span class="ach-reward">${escapeHtml(r.def.rewardLabel)}</span>` : '';
+        const iconBlock =
+          r.def.iconKind === 'coin'
+            ? `<div class="ach-icon ach-icon-coin" aria-hidden="true"><img class="ach-icon-coin-img" src="${escapeHtml(this.coinIconUrl)}" alt="" width="26" height="26" decoding="async" draggable="false" /></div>`
+            : `<div class="ach-icon ach-icon-${escapeHtml(r.def.iconKind)}" aria-hidden="true"><span class="ach-icon-glyph"></span></div>`;
         return `
           <div class="${cls}">
-            <div class="ach-icon ach-icon-${r.def.iconKind}" aria-hidden="true">
-              <span class="ach-icon-glyph"></span>
-            </div>
+            ${iconBlock}
             <div class="ach-meta">
               <div class="ach-name">${escapeHtml(r.def.name)}${reward}</div>
               <div class="ach-desc">${escapeHtml(r.def.desc)}</div>
@@ -1763,6 +1875,11 @@ export class HUD {
   private hideAchievementsOverlay(): void {
     this.achievementsVisible = false;
     this.achievementsOverlay.classList.remove('show');
+  }
+
+  /** Inline stack-of-cash art (`ui/money.png`) for labels that previously used the coin emoji. */
+  private coinIconImg(className: string, size: number): string {
+    return `<img class="${className}" src="${escapeHtml(this.coinIconUrl)}" alt="" width="${size}" height="${size}" decoding="async" draggable="false" />`;
   }
 
   private syncModeSelectMenuBackdrop(): void {
@@ -2148,9 +2265,8 @@ export class HUD {
   ): string {
     const canAfford = coins >= def.entryFeeCoins;
     const tierLabel = TIER_LABELS[def.id] ?? `${def.id.toUpperCase()} TIER`;
-    const ctaLabel = canAfford
-      ? `Enter — ${formatNumber(def.entryFeeCoins)} 🪙`
-      : `Need ${formatNumber(def.entryFeeCoins)} 🪙`;
+    const ctaText = canAfford ? `Enter — ${formatNumber(def.entryFeeCoins)}` : `Need ${formatNumber(def.entryFeeCoins)}`;
+    const ctaHtml = `${escapeHtml(ctaText)}${this.coinIconImg('hud-inline-coin-icon hud-inline-coin-icon--modeselect-cta', 20)}`;
     const ctaDisabled = canAfford ? '' : 'data-disabled="true"';
     const heroUrl = escapeHtml(this.modeSelectTournamentCupUrl(def.id));
     return `
@@ -2189,7 +2305,7 @@ export class HUD {
           </div>
           <button class="btn ${canAfford ? 'primary' : 'ghost'} modeselect-cta" type="button"
             data-mode-action="tournament:${escapeHtml(def.id)}" ${ctaDisabled}>
-            ${escapeHtml(ctaLabel)}
+            ${ctaHtml}
           </button>
         </div>
       </article>
@@ -2201,6 +2317,10 @@ export class HUD {
     if (!t) {
       this.tournamentSlots.innerHTML = '';
       this.tournamentStartBtn.style.display = 'none';
+      this.tournamentStartBtn.removeAttribute('aria-describedby');
+      this.tournamentEntryFeeEl.hidden = true;
+      this.tournamentEntryFeeEl.removeAttribute('aria-label');
+      this.tournamentEntryFeeNumEl.textContent = '';
       this.tournamentOverlay.setAttribute('data-accent', 'pro');
       this.tournamentTitleRow.setAttribute('aria-label', 'Tournament Bracket');
       this.tournamentCupImg.alt = '';
@@ -2232,6 +2352,22 @@ export class HUD {
     const startCta = `Start Match ${t.currentRound + 1}`;
     this.tournamentStartLabel.textContent = startCta;
     this.tournamentStartBtn.setAttribute('aria-label', startCta);
+    /** Entry fee is charged once at run start; only show it under the CTA for Match 1. */
+    const showEntryFeeUnderStart = stillRunning && t.currentRound === 0;
+    if (showEntryFeeUnderStart) {
+      this.tournamentEntryFeeEl.hidden = false;
+      this.tournamentEntryFeeNumEl.textContent = formatNumber(t.entryFeeCoins);
+      this.tournamentEntryFeeEl.setAttribute(
+        'aria-label',
+        `Entry fee ${formatNumber(t.entryFeeCoins)} coins`,
+      );
+      this.tournamentStartBtn.setAttribute('aria-describedby', 'hud-tournament-entry-fee');
+    } else {
+      this.tournamentEntryFeeEl.hidden = true;
+      this.tournamentEntryFeeEl.removeAttribute('aria-label');
+      this.tournamentEntryFeeNumEl.textContent = '';
+      this.tournamentStartBtn.removeAttribute('aria-describedby');
+    }
     const untouchedRun =
       t.status === 'active' &&
       t.currentRound === 0 &&
@@ -2409,10 +2545,25 @@ export class HUD {
     const chipsR = this.topStack.querySelector('#pot-chips-right')!;
     const wrapL = chipsL.closest('.hud-pot-below-name') as HTMLElement | null;
     const wrapR = chipsR.closest('.hud-pot-below-name') as HTMLElement | null;
+    const groupLabel = this.topStack.querySelector('#pot-player-group-label') as HTMLElement | null;
+    const groupLabelOpp = this.topStack.querySelector('#pot-opponent-group-label') as HTMLElement | null;
+
+    const setPlayerGroupLabel = (text: string): void => {
+      if (!groupLabel) return;
+      groupLabel.textContent = text;
+      groupLabel.style.display = text ? '' : 'none';
+    };
+    const setOpponentGroupLabel = (text: string): void => {
+      if (!groupLabelOpp) return;
+      groupLabelOpp.textContent = text;
+      groupLabelOpp.style.display = text ? '' : 'none';
+    };
 
     if (!ctx.showPotProgressStrip) {
       chipsL.innerHTML = '';
       chipsR.innerHTML = '';
+      setPlayerGroupLabel('');
+      setOpponentGroupLabel('');
       if (wrapL) wrapL.style.display = 'none';
       if (wrapR) wrapR.style.display = 'none';
       return;
@@ -2424,6 +2575,8 @@ export class HUD {
     if (pot.kind === 'open') {
       chipsL.innerHTML = stripOrdered(SOLID_NUMBERS, pot.solids, this.assetBaseUrl);
       chipsR.innerHTML = stripOrdered(STRIPE_NUMBERS, pot.stripes, this.assetBaseUrl);
+      setPlayerGroupLabel('');
+      setOpponentGroupLabel('');
       return;
     }
 
@@ -2434,9 +2587,13 @@ export class HUD {
       const aiOrder = ag === 'solid' ? SOLID_NUMBERS : STRIPE_NUMBERS;
       chipsL.innerHTML = stripOrdered(aiOrder, pot.ai, this.assetBaseUrl);
       chipsR.innerHTML = stripOrdered(playerOrder, pot.player, this.assetBaseUrl);
+      setPlayerGroupLabel(pg === 'solid' ? 'SOLIDS' : 'STRIPES');
+      setOpponentGroupLabel(ag === 'solid' ? 'SOLIDS' : 'STRIPES');
     } else {
       chipsL.innerHTML = stripOrdered(SOLID_NUMBERS, pot.ai, this.assetBaseUrl);
       chipsR.innerHTML = stripOrdered(STRIPE_NUMBERS, pot.player, this.assetBaseUrl);
+      setPlayerGroupLabel('');
+      setOpponentGroupLabel('');
     }
   }
 
@@ -2515,9 +2672,9 @@ export class HUD {
     /** Champion bonus is awarded by the engine; surface it in the reward chip too. */
     const champBonus = isTournamentChamp ? t?.championBonusCoins ?? 0 : 0;
     const rewardTotal = reward + champBonus;
-    this.endReward.textContent = `${rewardTotal > 0 ? '+' : ''}${formatNumber(rewardTotal)} 🪙`;
+    this.endReward.innerHTML = `${rewardTotal > 0 ? '+' : ''}${formatNumber(rewardTotal)}${this.coinIconImg('hud-inline-coin-icon hud-inline-coin-icon--end-screen', 18)}`;
     const coins = h.profile?.coins ?? 0;
-    this.endBalance.textContent = `${formatNumber(coins)} 🪙`;
+    this.endBalance.innerHTML = `${formatNumber(coins)}${this.coinIconImg('hud-inline-coin-icon hud-inline-coin-icon--end-screen', 18)}`;
 
     /**
      * Champion celebration: a single big "earned" chip (coin + XP) plus
@@ -2541,14 +2698,14 @@ export class HUD {
 
       const earnedCoins = t.championBonusCoins ?? 0;
       const earnedXp = t.championBonusXp ?? 0;
-      this.championEarnedCoin.textContent = `+${formatNumber(earnedCoins)} 🪙`;
+      this.championEarnedCoin.innerHTML = `<span class="prize-earned-coin-amount">+${formatNumber(earnedCoins)}</span>${this.coinIconImg('hud-inline-coin-icon hud-inline-coin-icon--prize', 34)}`;
       this.championEarnedXp.textContent = `+${formatNumber(earnedXp)} XP`;
 
       const profile = h.profile;
       const totalCoins = profile?.coins ?? 0;
       const accountLevel = profile?.accountLevel ?? 1;
       const totalXp = profile?.xp ?? 0;
-      this.championTotalCoin.textContent = `${formatNumber(totalCoins)} 🪙`;
+      this.championTotalCoin.innerHTML = `${formatNumber(totalCoins)}${this.coinIconImg('hud-inline-coin-icon hud-inline-coin-icon--total', 22)}`;
       this.championTotalXp.textContent = `Lv ${accountLevel} · ${formatNumber(totalXp)} XP`;
     } else {
       this.end.removeAttribute('data-champion-accent');
@@ -2588,6 +2745,8 @@ export class HUD {
     this.hideHudNotice();
     this.ballInHandHintLabel.classList.remove('show');
     this.ballInHandHintLabel.setAttribute('aria-hidden', 'true');
+    this.aimIntroOverlay.classList.remove('show');
+    this.aimIntroOverlay.setAttribute('aria-hidden', 'true');
     this.hideNextMatchModal();
     this.hideLevelOverlay();
     this.clearHudTopBand();

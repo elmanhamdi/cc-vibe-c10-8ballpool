@@ -18,6 +18,10 @@ export type GameInputCommand =
   | { type: 'tournament.exit' }
   | { type: 'shop.buyCue'; cueId: string }
   | { type: 'shop.equipCue'; cueId: string }
+  /** First career break: dismiss “how to aim” overlay (see `HudState.eightBall.aimIntro`). */
+  | { type: 'aimIntro.dismiss' }
+  /** Tutorial: dismiss “pocket the 8” overlay (`HudState.eightBall.eightBallIntro`). */
+  | { type: 'tutorialEightIntro.dismiss' }
   | { type: 'spin.set'; nx: number; ny: number }
   | {
       type: 'pointer.table';

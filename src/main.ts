@@ -117,6 +117,7 @@ function pushPointer(phase: 'down' | 'move' | 'up' | 'cancel', sx: number, sy: n
 
 canvas.addEventListener('pointerdown', (e) => {
   if (engine.phase !== 'PlayerTurn') return;
+  if (engine.isAimIntroActive()) return;
   const { sx, sy } = canvasPoint(e);
   pushPointer('down', sx, sy);
   canvas.setPointerCapture(e.pointerId);
@@ -124,6 +125,7 @@ canvas.addEventListener('pointerdown', (e) => {
 
 canvas.addEventListener('pointerup', (e) => {
   if (engine.phase === 'PlayerTurn') {
+    if (engine.isAimIntroActive()) return;
     const { sx, sy } = canvasPoint(e);
     pushPointer('up', sx, sy);
   }
@@ -135,11 +137,13 @@ canvas.addEventListener('pointerup', (e) => {
 });
 
 canvas.addEventListener('pointercancel', () => {
+  if (engine.isAimIntroActive()) return;
   commandBuffer.push({ type: 'pointer.table', phase: 'cancel', tableX: 0, tableY: 0 });
 });
 
 canvas.addEventListener('pointermove', (e) => {
   if (engine.phase !== 'PlayerTurn') return;
+  if (engine.isAimIntroActive()) return;
   const { sx, sy } = canvasPoint(e);
   pushPointer('move', sx, sy);
 });

@@ -301,7 +301,7 @@ export class ThreeSceneAdapter {
     const sprite = new THREE.Sprite(mat);
     sprite.name = 'cueHandHint';
     sprite.renderOrder = 50;
-    sprite.scale.set(70, 70, 1);
+    sprite.scale.set(72, 72, 1);
     sprite.center.set(0.52, 0.42);
     sprite.rotation.z = 0.85;
     sprite.visible = false;
@@ -321,12 +321,48 @@ export class ThreeSceneAdapter {
     const sprite = new THREE.Sprite(mat);
     sprite.name = 'ballInHandHint';
     sprite.renderOrder = 55;
-    sprite.scale.set(64, 64, 1);
+    sprite.scale.set(66, 66, 1);
     sprite.center.set(0.5, 0.8);
     sprite.rotation.z = 0;
     sprite.visible = false;
     this.tableGroup.add(sprite);
     this.ballInHandHintSprite = sprite;
+  }
+
+  /** Demo “finger” on felt during first-break aim intro (`AssetIds.aimIntroFinger`). */
+  private async ensureAimIntroFingerSprite(container: THREE.Group): Promise<void> {
+    if (container.userData.aimIntroReady === true) return;
+    if (container.userData.aimIntroLoading === true) return;
+    container.userData.aimIntroLoading = true;
+    const href = new URL('../ui/hand-cursor-tap.png', import.meta.url).href;
+    const loader = new THREE.TextureLoader();
+    try {
+      const tex = await loader.loadAsync(href);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.wrapS = THREE.ClampToEdgeWrapping;
+      tex.wrapT = THREE.ClampToEdgeWrapping;
+      tex.generateMipmaps = false;
+      const mat = new THREE.SpriteMaterial({
+        map: tex,
+        transparent: true,
+        depthTest: true,
+        depthWrite: false,
+        alphaTest: 0.02,
+      });
+      const sprite = new THREE.Sprite(mat);
+      sprite.name = 'aimIntroFinger';
+      sprite.renderOrder = 62;
+      sprite.scale.set(52, 52, 1);
+      sprite.center.set(0.42, 0.7);
+      container.add(sprite);
+      container.userData.aimIntroReady = true;
+    } catch {
+      /* optional */
+    } finally {
+      container.userData.aimIntroLoading = false;
+    }
   }
 
   private async loadBallDiffuseTextures(): Promise<void> {
@@ -399,10 +435,10 @@ export class ThreeSceneAdapter {
     sprite.visible = on;
     if (!on) return;
     this.cueHandHintPhase += dtSec * 4.8;
-    const amp = 10;
+    const amp = 12;
     /** +Y top/ucu; değeri düşürmek ikonu uçtan kavrama doğru uzaklaştırır. */
-    const baseY = 58;
-    const sideX = 12;
+    const baseY = 64;
+    const sideX = 14;
     sprite.position.set(sideX, baseY - Math.sin(this.cueHandHintPhase) * amp, 0);
   }
 
@@ -431,7 +467,7 @@ export class ThreeSceneAdapter {
       return;
     }
     this.ballInHandHintPhase += dtSec * 5.2;
-    const bob = Math.sin(this.ballInHandHintPhase) * 5;
+    const bob = Math.sin(this.ballInHandHintPhase) * 7;
     const w = this.physicsTable.width;
     /** +X ≈ sağ; negatif Y ofseti = ikon biraz daha aşağı. */
     sprite.position.set(bx + w * 0.036, by + w * -0.008 + bob, bz);
@@ -669,6 +705,11 @@ export class ThreeSceneAdapter {
       );
       return root;
     }
+    if (o.templateId === AssetIds.aimIntroFinger) {
+      const root = new THREE.Group();
+      void this.ensureAimIntroFingerSprite(root);
+      return root;
+    }
     const ball = parseBallTemplate(o.templateId);
     if (ball) {
       const diffuse = this.ballDiffuseByNumber.get(ball.num);
@@ -742,7 +783,7 @@ export class ThreeSceneAdapter {
   private applyTransform(obj: THREE.Object3D, o: WorldObjectState): void {
     const { position: p, rotation: r, scale: s } = o.transform;
     obj.position.set(p.x, p.y + TABLE_SCENE_Y_LIFT + PLAYFIELD_RENDER_Y_OFFSET, p.z);
-    if (!o.objectId.startsWith('ball.')) {
+    if (!o.objectId.startsWith('ball.') && o.objectId !== 'aimIntro.demoCursor') {
       obj.quaternion.set(r.x, r.y, r.z, r.w);
     }
     obj.scale.set(s.x, s.y, s.z);
@@ -767,6 +808,12 @@ export class ThreeSceneAdapter {
     }
     obj.userData.tungWallState = undefined;
     obj.traverse((child) => {
+      if (child instanceof THREE.Sprite) {
+        const sm = child.material as THREE.SpriteMaterial;
+        if (sm.map) sm.map.dispose();
+        sm.dispose();
+        return;
+      }
       if (child instanceof THREE.Mesh) {
         const m = child.material;
         if (!Array.isArray(m)) m.dispose?.();

@@ -4,8 +4,9 @@ import type { GamePhase } from '../core/types.js';
 import { AssetManifest } from '../assets/AssetManifest.js';
 import { AssetIds } from '../assets/AssetIds.js';
 import { resolveBrowserAssetUrl } from '../assets/resolveBrowserAssetUrl.js';
-import { XP_REWARD_WIN } from '../core/AccountLevel.js';
+import { XP_REWARD_LOSS, XP_REWARD_WIN } from '../core/AccountLevel.js';
 import { SHOP_CUE_CATALOG } from '../core/ShopCatalog.js';
+import { portraitReactionAssetId } from '../opponents/opponentPortraitReactions.js';
 import type { StorageAdapter } from '../core/StorageAdapter.js';
 import { evaluateAchievements } from './AchievementsCatalog.js';
 import { getLeaderboard } from './LeaderboardData.js';
@@ -34,6 +35,20 @@ function opponentHudAvatarUrl(assetBaseUrl: string, opponentId: string): string 
   return `${u}?v=${encodeURIComponent(opponentId)}`;
 }
 
+function opponentSmileReactionUrl(assetBaseUrl: string, opponentId: string): string {
+  const smileManifestByOpponentId: Readonly<Record<string, keyof typeof AssetManifest>> = {
+    tungo: 'ui.opponent.tungo.reaction.smile',
+    torta_tartaruga: 'ui.opponent.torta_tartaruga.reaction.smile',
+    gattotto_otto: 'ui.opponent.gattotto_otto.reaction.smile',
+  };
+  const key = smileManifestByOpponentId[opponentId];
+  if (key) {
+    const entry = AssetManifest[key];
+    if (entry) return resolveBrowserAssetUrl(assetBaseUrl, entry.browserUrl);
+  }
+  return opponentHudAvatarUrl(assetBaseUrl, opponentId);
+}
+
 export class HUD {
   private readonly root: HTMLElement;
   private readonly topStack: HTMLElement;
@@ -50,8 +65,14 @@ export class HUD {
   private readonly endTitleImg: HTMLImageElement;
   private readonly urlEndYouWon: string;
   private readonly urlEndYouLose: string;
+  private readonly endPlayerName: HTMLElement;
+  private readonly endPlayerNameText: HTMLElement;
+  private readonly endModeWinBadge: HTMLImageElement;
+  private readonly endLossOpponentPortrait: HTMLImageElement;
+  private readonly btnPlayAgain: HTMLButtonElement;
   private readonly btnNext: HTMLButtonElement;
   private readonly btnRematch: HTMLButtonElement;
+  private readonly urlEndNextGame: string;
   private readonly btnShop: HTMLButtonElement;
   private readonly confettiLayer: HTMLElement;
   /** Champion banner: trophy, big earned chips, and total balances. Tournament-final only. */
@@ -361,25 +382,63 @@ export class HUD {
     this.bubble.innerHTML = `<div id="bubble-text" class="bubble-text"></div>`;
 
     this.end = el('div', 'panel end interactive');
+    const championRibbonUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/champion_match.png');
+    const endPlayCtaUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/Button_Play_new.png');
+    const endPlayAgainUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/play_again.png');
+    this.urlEndNextGame = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/next-game.png');
     this.end.innerHTML = `
       <div class="end-result-hero" aria-hidden="false">
         <div id="end-title-wrap" class="end-title-wrap">
           <img id="end-title-img" class="end-title-img" src="" alt="" decoding="async" draggable="false" />
         </div>
       </div>
-      <div class="end-card">
-        <div id="end-opp-react" class="end-opp-react" aria-hidden="true">
-          <p id="end-opp-quote" class="end-opp-quote"></p>
+      <div class="end-champion-ribbon-surface" aria-hidden="true">
+        <div id="end-champion-ribbon-wrap" class="end-champion-ribbon-wrap" hidden>
+          <img
+            id="end-champion-ribbon-img"
+            class="end-champion-ribbon-img"
+            src="${championRibbonUrl}"
+            alt=""
+            decoding="async"
+            draggable="false"
+          />
         </div>
+      </div>
+      <div class="end-card">
         <div id="end-champion" class="end-champion" data-active="false" aria-hidden="true">
           <div class="end-champion-trophy" aria-hidden="true"></div>
           <div class="end-champion-name" id="end-champion-name">Tournament</div>
         </div>
+        <div id="end-player-name" class="end-player-name">
+          <span id="end-player-name-text" class="end-player-name-text">You</span>
+          <img
+            id="end-mode-win-badge"
+            class="end-mode-win-badge"
+            src=""
+            alt=""
+            decoding="async"
+            draggable="false"
+          />
+          <img
+            id="end-loss-opponent-portrait"
+            class="end-loss-opponent-portrait"
+            src=""
+            alt=""
+            decoding="async"
+            draggable="false"
+          />
+        </div>
         <div class="end-head">
-          <div id="end-sub" class="sub">—</div>
+          <div id="end-sub" class="sub end-reason-sub">—</div>
           <div class="end-level-row">
             <span class="end-level-label">Your level</span>
-            <span id="end-lvl" class="lvl-star lvl-clickable" aria-label="Level">1</span>
+            <span id="end-lvl" class="lvl-star lvl-clickable end-lvl-badge" aria-label="Level">1</span>
+          </div>
+          <div class="end-xp-block">
+            <div class="end-xp-track" aria-hidden="true">
+              <div id="end-xp-fill" class="end-xp-fill"></div>
+            </div>
+            <div id="end-xp-delta" class="end-xp-delta">+0 EXP</div>
           </div>
         </div>
         <div id="end-champion-prize" class="end-champion-prize" data-active="false" aria-hidden="true">
@@ -404,11 +463,22 @@ export class HUD {
           </div>
         </div>
         <div class="end-actions">
-          <button id="btn-shop" class="btn ghost btn-icon-only" aria-label="Open shop" title="Shop">
+          <button id="btn-shop" class="btn ghost btn-icon-only end-icon-btn end-icon-btn--shop" aria-label="Open shop" title="Shop">
             <img class="btn-icon" src="${resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/button_shop.png')}" alt="" decoding="async" draggable="false" />
           </button>
+          <div class="end-actions-mid">
+            <button id="btn-play-again" type="button" class="end-play-again-btn interactive" aria-label="Play Again" title="Play Again">
+              <img
+                class="end-play-again-img"
+                src="${endPlayAgainUrl}"
+                alt=""
+                decoding="async"
+                draggable="false"
+              />
+            </button>
+          </div>
           <div class="end-actions-main">
-            <button id="btn-rematch" class="btn ghost btn-icon-only" aria-label="Back to main menu" title="Back to Main Menu">
+            <button id="btn-rematch" class="btn ghost btn-icon-only end-icon-btn end-icon-btn--home" aria-label="Back to main menu" title="Back to Main Menu">
               <img class="btn-icon" src="${resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/button_mainmenu.png')}" alt="" decoding="async" draggable="false" />
             </button>
             <button id="btn-next" class="btn btn-next primary" aria-label="Next match" title="Next Match">
@@ -426,6 +496,12 @@ export class HUD {
     this.endTitleImg = this.end.querySelector('#end-title-img') as HTMLImageElement;
     this.urlEndYouWon = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/youwon.png');
     this.urlEndYouLose = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/youlose.png');
+    this.endPlayerName = this.end.querySelector('#end-player-name') as HTMLElement;
+    this.endPlayerNameText = this.end.querySelector('#end-player-name-text') as HTMLElement;
+    this.endModeWinBadge = this.end.querySelector('#end-mode-win-badge') as HTMLImageElement;
+    this.endLossOpponentPortrait = this.end.querySelector('#end-loss-opponent-portrait') as HTMLImageElement;
+    this.end.style.setProperty('--end-play-cta-url', `url("${endPlayCtaUrl}")`);
+    this.btnPlayAgain = this.end.querySelector('#btn-play-again') as HTMLButtonElement;
     this.btnNext = this.end.querySelector('#btn-next') as HTMLButtonElement;
     this.btnRematch = this.end.querySelector('#btn-rematch') as HTMLButtonElement;
     this.btnShop = this.end.querySelector('#btn-shop') as HTMLButtonElement;
@@ -842,6 +918,34 @@ export class HUD {
       this.playHudClickSound();
       /** Match-end secondary action is now always "Back to Main Menu". */
       this.pushCommand({ type: 'tournament.exit' });
+    });
+    this.btnPlayAgain.addEventListener('click', () => {
+      this.playHudClickSound();
+      const h = this.getHud();
+      const t = h.tournament;
+      /** Casual end-screen → instant new casual match. */
+      if (!t) {
+        this.pushCommand({ type: 'tournament.exit' });
+        this.pushCommand({ type: 'menu.startCasual' });
+        return;
+      }
+      /** Tournament final (won/lost) → re-enter same tournament flow with fee/start page. */
+      if (t.status === 'won' || t.status === 'lost') {
+        const def = h.tournamentCatalog?.find((d) => d.id === t.defId);
+        const coins = h.profile?.coins ?? 0;
+        if (def && coins >= def.entryFeeCoins) {
+          this.pushCommand({ type: 'tournament.exit' });
+          this.pushCommand({ type: 'menu.startTournament', tournamentId: t.defId });
+          this.showTournamentOverlay();
+          return;
+        }
+        /** Not enough coins (or missing def) → fallback to tournament picker. */
+        this.pushCommand({ type: 'tournament.exit' });
+        this.showModeSelectOverlay('tournaments');
+        return;
+      }
+      /** Mid-tournament screens are handled via Next Match flow; keep a safe fallback. */
+      this.showTournamentOverlay();
     });
     this.btnShop.addEventListener('click', () => {
       this.playHudClickSound();
@@ -2373,7 +2477,7 @@ export class HUD {
       t.currentRound === 0 &&
       t.record.every((r) => r === 'pending');
     const exitLabel = this.tournamentExitBtn.querySelector('.modeselect-back-label') as HTMLElement | null;
-    const exitText = untouchedRun ? 'Back' : stillRunning ? 'Forfeit' : 'Close';
+    const exitText = untouchedRun ? 'Back' : stillRunning ? 'Back' : 'Close';
     if (exitLabel) exitLabel.textContent = exitText;
     else this.tournamentExitBtn.textContent = exitText;
 
@@ -2385,7 +2489,9 @@ export class HUD {
         const result = t.record[i] ?? 'pending';
         const isCurrent = stillRunning && i === t.currentRound;
         const status = isCurrent ? 'current' : result;
-        const avatarUrl = opponentHudAvatarUrl(this.assetBaseUrl, opp.id);
+        const avatarUrl = status === 'won'
+          ? tournamentSlotReactionUrl(this.assetBaseUrl, opp.id, 'cry')
+          : opponentHudAvatarUrl(this.assetBaseUrl, opp.id);
         const pillIsBadge = status === 'current' || status === 'pending';
         const pillInner =
           status === 'current'
@@ -2472,7 +2578,7 @@ export class HUD {
     if (layer.classList.contains('show') && layer.childElementCount > 0) return;
     layer.innerHTML = '';
     layer.classList.add('show');
-    const colors = ['#ffb347', '#ffd166', '#7ee8fa', '#ff6f91', '#9b8cff'];
+    const colors = ['#ffd76a', '#ffaa22', '#ffe8b0', '#f4c430', '#ff8c42', '#e8c866', '#c9a227', '#fff2c8'];
     const pieces = 70;
     for (let i = 0; i < pieces; i++) {
       const p = document.createElement('span');
@@ -2573,8 +2679,8 @@ export class HUD {
     if (wrapR) wrapR.style.removeProperty('display');
 
     if (pot.kind === 'open') {
-      chipsL.innerHTML = stripOrdered(SOLID_NUMBERS, pot.solids, this.assetBaseUrl);
-      chipsR.innerHTML = stripOrdered(STRIPE_NUMBERS, pot.stripes, this.assetBaseUrl);
+      chipsL.innerHTML = stripUnknown(this.assetBaseUrl);
+      chipsR.innerHTML = stripUnknown(this.assetBaseUrl);
       setPlayerGroupLabel('');
       setOpponentGroupLabel('');
       return;
@@ -2590,8 +2696,8 @@ export class HUD {
       setPlayerGroupLabel(pg === 'solid' ? 'SOLIDS' : 'STRIPES');
       setOpponentGroupLabel(ag === 'solid' ? 'SOLIDS' : 'STRIPES');
     } else {
-      chipsL.innerHTML = stripOrdered(SOLID_NUMBERS, pot.ai, this.assetBaseUrl);
-      chipsR.innerHTML = stripOrdered(STRIPE_NUMBERS, pot.player, this.assetBaseUrl);
+      chipsL.innerHTML = stripUnknown(this.assetBaseUrl);
+      chipsR.innerHTML = stripUnknown(this.assetBaseUrl);
       setPlayerGroupLabel('');
       setOpponentGroupLabel('');
     }
@@ -2599,27 +2705,15 @@ export class HUD {
 
   private syncEndOverlay(won: boolean, reason: string, h: HudState): void {
     const sub = this.end.querySelector('#end-sub')!;
-    const oppReact = this.end.querySelector('#end-opp-react') as HTMLElement;
-    const oppQuote = this.end.querySelector('#end-opp-quote') as HTMLElement;
-    const me = h.eightBall?.matchEndOpponentPortrait;
-    /** Win or loss: show Tungo (or future) match-end portrait when the engine provides one. */
-    if (me?.portraitAssetId) {
-      const entry = AssetManifest[me.portraitAssetId as keyof typeof AssetManifest];
-      const src = entry ? resolveBrowserAssetUrl(this.assetBaseUrl, entry.browserUrl) : '';
-      oppReact.style.backgroundImage = src ? `url("${src}")` : '';
-      oppQuote.textContent = me.text ?? '';
-      oppReact.classList.add('show');
-      oppReact.setAttribute('aria-hidden', 'false');
-    } else {
-      oppReact.classList.remove('show');
-      oppReact.style.backgroundImage = '';
-      oppQuote.textContent = '';
-      oppReact.setAttribute('aria-hidden', 'true');
-    }
     const t = h.tournament;
+    const eb = h.eightBall;
     const isTournamentChamp = won && t?.status === 'won';
     const isTournamentMidWin = won && t?.status === 'active';
     const isTournamentLoss = !won && t?.status === 'lost';
+    const isTournamentFinal = t?.status === 'won' || t?.status === 'lost';
+    const isFirstTutorialEnd = (eb?.tutorialActive ?? false) && !t;
+    /** Play Again: casual veya turnuva run bitti (şampiyonluk / elendi); ara tur galibiyetinde yok. */
+    const showPlayAgain = !isFirstTutorialEnd && (!t || isTournamentFinal);
 
     if (won) {
       this.endTitleImg.src = this.urlEndYouWon;
@@ -2627,6 +2721,33 @@ export class HUD {
     } else {
       this.endTitleImg.src = this.urlEndYouLose;
       this.endTitleImg.alt = isTournamentLoss ? 'Eliminated' : 'You lost';
+    }
+
+    /** Mode win badge: sadece casual veya turnuva şampiyonluğu; ara tur galibiyetinde "You" metni. */
+    if (won) {
+      this.endPlayerName.classList.remove('end-player-name--loss-opponent');
+      const showWinModeBadge = !t || isTournamentChamp;
+      if (showWinModeBadge) {
+        this.endPlayerName.classList.add('end-player-name--win-badge');
+        this.endModeWinBadge.src = endCardModeWinBadgeUrl(this.assetBaseUrl, t?.defId);
+        this.endModeWinBadge.alt = t?.defName ? `${t.defName} win` : 'Casual win';
+      } else {
+        this.endPlayerName.classList.remove('end-player-name--win-badge');
+        this.endModeWinBadge.removeAttribute('src');
+        this.endModeWinBadge.alt = '';
+        this.endPlayerNameText.textContent = 'You';
+      }
+      this.endLossOpponentPortrait.removeAttribute('src');
+      this.endLossOpponentPortrait.alt = '';
+    } else {
+      this.endPlayerName.classList.remove('end-player-name--win-badge');
+      this.endPlayerName.classList.add('end-player-name--loss-opponent');
+      this.endModeWinBadge.removeAttribute('src');
+      this.endModeWinBadge.alt = '';
+      const oppId = eb?.opponentId ?? 'tungo';
+      const oppName = eb?.opponentName ?? 'Opponent';
+      this.endLossOpponentPortrait.src = opponentSmileReactionUrl(this.assetBaseUrl, oppId);
+      this.endLossOpponentPortrait.alt = `${oppName} smiling`;
     }
     this.endTitleWrap.classList.toggle('end-title-wrap--win', won);
     this.endTitleWrap.classList.toggle('end-title-wrap--champion', isTournamentChamp);
@@ -2650,22 +2771,36 @@ export class HUD {
       this.btnNext.setAttribute('aria-label', 'Back to menu');
       this.btnNext.setAttribute('title', 'Back to Menu');
       this.btnNext.setAttribute('data-home-icon', 'true');
+      this.btnNext.classList.remove('btn-next--play-asset');
+      this.btnNext.style.removeProperty('--end-play-cta-url');
     } else if (isTournamentMidWin && t) {
       const text = `Next Match (${Math.min(t.currentRound + 1, t.size)}/${t.size})`;
       if (nextLabel) nextLabel.textContent = text;
       this.btnNext.setAttribute('aria-label', text);
       this.btnNext.setAttribute('title', text);
       this.btnNext.setAttribute('data-home-icon', 'false');
+      this.btnNext.classList.add('btn-next--play-asset');
+      this.btnNext.style.setProperty('--end-play-cta-url', `url("${this.urlEndNextGame}")`);
     } else {
       const text = 'Return to Home';
       if (nextLabel) nextLabel.textContent = text;
       this.btnNext.setAttribute('aria-label', text);
       this.btnNext.setAttribute('title', text);
       this.btnNext.setAttribute('data-home-icon', 'true');
+      this.btnNext.classList.remove('btn-next--play-asset');
+      this.btnNext.style.removeProperty('--end-play-cta-url');
     }
     const nextIconOnly = this.btnNext.getAttribute('data-home-icon') === 'true';
     this.btnNext.classList.toggle('primary', !nextIconOnly);
     this.btnNext.classList.toggle('ghost', nextIconOnly);
+    this.btnNext.classList.toggle(
+      'btn-next--play-asset',
+      won && !nextIconOnly,
+    );
+    const endActions = this.end.querySelector('.end-actions') as HTMLElement | null;
+    endActions?.classList.toggle('end-actions--with-play-again', showPlayAgain);
+    this.btnPlayAgain.style.display = showPlayAgain ? 'inline-block' : 'none';
+    /** Shop + Next / Home — Play Again ekstra; Next’i asla gizleme (turnuva ara tur vb.). */
     this.btnNext.style.display = won ? 'inline-flex' : 'none';
     this.btnRematch.style.display = won ? 'none' : 'inline-flex';
     const reward = won ? h.coinRewardWin ?? 0 : 0;
@@ -2711,6 +2846,39 @@ export class HUD {
       this.end.removeAttribute('data-champion-accent');
     }
 
+    this.end.classList.toggle('end-screen--win', won);
+    this.end.classList.toggle('end-screen--loss', !won);
+
+    const ribbonWrap = this.end.querySelector('#end-champion-ribbon-wrap') as HTMLElement | null;
+    const ribbonSurface = this.end.querySelector('.end-champion-ribbon-surface') as HTMLElement | null;
+    /** "MATCH CHAMPION" banner should appear on every victory end-screen. */
+    const showChampionRibbon = won;
+    this.end.classList.toggle('end--champion-ribbon', showChampionRibbon);
+    if (ribbonWrap) {
+      ribbonWrap.hidden = !showChampionRibbon;
+      ribbonWrap.setAttribute('aria-hidden', showChampionRibbon ? 'false' : 'true');
+    }
+    if (ribbonSurface) {
+      ribbonSurface.setAttribute('aria-hidden', showChampionRibbon ? 'false' : 'true');
+    }
+    const xpFill = this.end.querySelector('#end-xp-fill') as HTMLElement | null;
+    const xpDelta = this.end.querySelector('#end-xp-delta') as HTMLElement | null;
+    const prof = h.profile;
+    if (xpFill && prof) {
+      const p01 = Math.max(0, Math.min(1, prof.accountProgress01 ?? 0));
+      xpFill.style.width = `${Math.round(p01 * 100)}%`;
+    }
+    if (xpDelta) {
+      if (won) {
+        const xpAmt = isTournamentChamp && t ? (t.championBonusXp ?? 0) : XP_REWARD_WIN;
+        xpDelta.textContent = `+${formatNumber(xpAmt)} EXP`;
+        xpDelta.classList.add('end-xp-delta--win');
+      } else {
+        xpDelta.textContent = `+${formatNumber(XP_REWARD_LOSS)} EXP`;
+        xpDelta.classList.remove('end-xp-delta--win');
+      }
+    }
+
     if (won) {
       this.startConfetti();
     } else {
@@ -2724,6 +2892,15 @@ export class HUD {
     this.oppReaction.querySelector('.opp-reaction-stage')?.classList.remove('opp-react-anim');
     this.oppReaction.classList.remove('show');
     this.bubble.style.display = 'none';
+    this.end.classList.remove('end-screen--win', 'end-screen--loss', 'end--champion-ribbon');
+    this.endPlayerName.classList.remove('end-player-name--win-badge');
+    this.endPlayerName.classList.remove('end-player-name--loss-opponent');
+    this.endModeWinBadge.removeAttribute('src');
+    this.endModeWinBadge.alt = '';
+    this.endLossOpponentPortrait.removeAttribute('src');
+    this.endLossOpponentPortrait.alt = '';
+    this.btnPlayAgain.style.display = 'none';
+    this.end.querySelector('.end-actions')?.classList.remove('end-actions--with-play-again');
     this.end.style.display = 'none';
     this.soundBtn.style.display = 'none';
     this.powerBarPointerDown = false;
@@ -2812,6 +2989,12 @@ function potStripSlotHtml(n: number, assetBaseUrl: string, isPotted: boolean): s
   return `<span class="pot-slot pot-slot--icon" aria-hidden="true"><img class="pot-slot-img" src="${ballSrc}" alt="" decoding="async" /></span>`;
 }
 
+function stripUnknown(assetBaseUrl: string): string {
+  const emptySrc = resolveBrowserAssetUrl(assetBaseUrl, 'ui/no-ball.png');
+  const slot = `<span class="pot-slot pot-slot--icon" aria-hidden="true"><img class="pot-slot-img" src="${emptySrc}" alt="" decoding="async" /></span>`;
+  return new Array(7).fill(slot).join('');
+}
+
 /** Cue shop showcase art (full card PNGs); other catalog ids use procedural preview. */
 function shopCueShowcaseImageUrl(assetBaseUrl: string, cueId: string): string | null {
   const rel: Record<string, string> = {
@@ -2864,6 +3047,26 @@ function escapeHtml(s: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+/** Kart üstü "You" satırı — mod kazanım rozeti (`public/ui/Win_*.png`); casual = turnuva yok. */
+function endCardModeWinBadgeUrl(assetBaseUrl: string, tournamentDefId: string | undefined): string {
+  const fileByDef: Readonly<Record<string, string>> = {
+    rookie: 'ui/Win_RookieCup.png',
+    pro: 'ui/Win_ProSeries.png',
+    elite: 'ui/Win_EliteBrawl.png',
+    grandslam: 'ui/Win_GrandSlam.png',
+  };
+  const rel =
+    tournamentDefId && fileByDef[tournamentDefId] ? fileByDef[tournamentDefId]! : 'ui/Win_Casual.png';
+  return resolveBrowserAssetUrl(assetBaseUrl, rel);
+}
+
+function tournamentSlotReactionUrl(assetBaseUrl: string, opponentId: string, kind: 'cry'): string {
+  const key = portraitReactionAssetId(opponentId, kind);
+  const entry = AssetManifest[key as keyof typeof AssetManifest];
+  if (entry) return resolveBrowserAssetUrl(assetBaseUrl, entry.browserUrl);
+  return opponentHudAvatarUrl(assetBaseUrl, opponentId);
 }
 
 /** Maps `TournamentCatalog` tier id → mode-select trophy manifest key. */

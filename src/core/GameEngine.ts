@@ -1881,6 +1881,7 @@ export class GameEngine implements Game {
           !this.awaitingBallInHandPlacement &&
           this.physics.cue.active &&
           !this.isAimIntroActive(),
+        tutorialActive: this.tutorialActive,
         powerBarPull01:
           snap.phase === 'PlayerTurn' &&
           this.activePlayer === 'player' &&
@@ -2401,6 +2402,12 @@ export class GameEngine implements Game {
       } else if (c.type === 'tournament.advance') {
         this.advanceTournament();
       } else if (c.type === 'tournament.exit') {
+        /** End-card uses `tournament.exit` like home — must also finish first-run tutorial or `tutorialActive` sticks forever. */
+        if (this.tutorialActive) {
+          this.writeTutorialCompleted();
+          this.tutorialActive = false;
+          this.tutorialShootHint = false;
+        }
         this.tournament = null;
         this.phase = 'MainMenu';
         this.aimIntroActive = false;

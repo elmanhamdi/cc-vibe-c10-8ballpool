@@ -175,6 +175,8 @@ export interface HudState {
     powerBarHint?: boolean;
     /** First-run tutorial: pulse power slider + drag cursor until first stroke. */
     tutorialShootHint?: boolean;
+    /** True while the onboarding tutorial match is active (hide end-screen extras like Play Again). */
+    tutorialActive?: boolean;
     /** 0–1 pull mirrored on the right-edge power bar (e.g. cue-stick charge on the table). */
     powerBarPull01: number;
     /** Match-end opponent reaction (Tungo lose face) when the player wins. */

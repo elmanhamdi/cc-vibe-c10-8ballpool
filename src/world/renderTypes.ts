@@ -135,6 +135,8 @@ export interface HudState {
   prompts: readonly { id: string; text: string; priority: number }[];
   profile?: ProfileHudView;
   coinRewardWin?: number;
+  /** Casual loss consolation coins (0 in tournaments). */
+  coinRewardLoss?: number;
   /** 8-ball–specific fields for the browser HUD implementation. */
   eightBall?: {
     phase: string;

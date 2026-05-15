@@ -33,6 +33,27 @@ const TABLE_RAY_PLANE_W = -(TABLE_SCENE_Y_LIFT + TABLE_PLAY_SURFACE_LOCAL_Y + PL
 const FLOOR_PLANE_WORLD_Y = TABLE_SCENE_Y_LIFT - 124;
 const FLOOR_EXTEND_MUL = 2.75;
 
+/**
+ * Imported `Cue.fbx` alignment with procedural cue: group origin = shaft center;
+ * +Y toward cue ball; tip end near this local Y (see `GameEngine` shaftLen / overhang).
+ */
+const CUE_IMPORTED_TIP_LOCAL_Y = 166;
+/** Total visual span along cue axis (matches stacked procedural cylinders, ~units). */
+const CUE_IMPORTED_TARGET_SPAN_Y = 374;
+
+/**
+ * FBX’te uç/top yönü: `normalize` içindeki Euler ile aynı node’da dönmemeli (sıra bozuyor).
+ * Hâlâ ters görünüyorsa `'rz'` veya `'none'` dene.
+ */
+const CUE_IMPORTED_END_FLIP: 'rx' | 'rz' | 'none' = 'rx';
+
+type CueAlbedoSlot = 'classic' | 'street' | 'pro' | 'neon';
+
+function cueShopIdToAlbedoSlot(cueId: string): CueAlbedoSlot {
+  if (cueId === 'street' || cueId === 'pro' || cueId === 'neon') return cueId;
+  return 'classic';
+}
+
 /** Tung container local: duvar masadan uzakta (−Z), düzlem XY (Y yukarı). */
 const TUNG_BACK_WALL_LOCAL_Z = -400;
 const TUNG_BACK_WALL_WIDTH_TABLE_MUL = 22.72;
@@ -97,6 +118,12 @@ export class ThreeSceneAdapter {
   private cueButt!: THREE.Mesh;
   private cueButtCap!: THREE.Mesh;
   private cueButtRing!: THREE.Mesh;
+  /** False after FBX replaces procedural meshes (avoid touching disposed meshes). */
+  private cueProceduralActive = false;
+  private cueMeshRoot: THREE.Group | null = null;
+  private cueImportInFlight = false;
+  private readonly cueAlbedoBySlot = new Map<CueAlbedoSlot, THREE.Texture>();
+  private adapterDisposed = false;
   private cueAppliedStyleId: string | null = null;
   /** İlk break “çek–vur” ipucu — `cuePullHandHint` açıkken sopada yukarı/aşağı. */
   private cueHandHintSprite: THREE.Sprite | null = null;
@@ -152,9 +179,11 @@ export class ThreeSceneAdapter {
     await this.loadBallDiffuseTextures();
     await this.loadCueHandHintTexture();
     await this.loadFloorUnderTable();
+    await this.loadImportedCueStickFromManifest();
   }
 
   dispose(): void {
+    this.adapterDisposed = true;
     for (const t of this.ballDiffuseByNumber.values()) {
       t.dispose();
     }
@@ -188,6 +217,28 @@ export class ThreeSceneAdapter {
       this.floorTexture.dispose();
       this.floorTexture = null;
     }
+    if (this.cueMeshRoot) {
+      this.cueMeshRoot.traverse((o) => {
+        if (o instanceof THREE.Mesh) {
+          const mats = Array.isArray(o.material) ? o.material : [o.material];
+          for (const m of mats) {
+            if (m instanceof THREE.Material) {
+              if ('map' in m && (m as THREE.MeshStandardMaterial).map) {
+                (m as THREE.MeshStandardMaterial).map = null;
+              }
+              m.dispose();
+            }
+          }
+          o.geometry?.dispose();
+        }
+      });
+      this.cueGroup.remove(this.cueMeshRoot);
+      this.cueMeshRoot = null;
+    }
+    for (const t of this.cueAlbedoBySlot.values()) {
+      t.dispose();
+    }
+    this.cueAlbedoBySlot.clear();
     this.renderer.dispose();
     this.ballGeo.dispose();
   }
@@ -474,9 +525,18 @@ export class ThreeSceneAdapter {
   }
 
   private applyCueStyle(cueId?: string): void {
-    if (!this.cueShaft) return;
     const id = cueId && CUE_STYLE_TABLE[cueId] ? cueId : 'classic';
     if (this.cueAppliedStyleId === id) return;
+
+    if (this.cueMeshRoot) {
+      this.cueAppliedStyleId = id;
+      const slot = cueShopIdToAlbedoSlot(id);
+      const tex = this.cueAlbedoBySlot.get(slot) ?? this.cueAlbedoBySlot.get('classic');
+      if (tex) this.applyCueAlbedoMap(this.cueMeshRoot, tex);
+      return;
+    }
+
+    if (!this.cueProceduralActive || !this.cueShaft) return;
     this.cueAppliedStyleId = id;
     const style = CUE_STYLE_TABLE[id]!;
     applyMatPart(this.cueShaft, style.shaft);
@@ -1328,6 +1388,130 @@ export class ThreeSceneAdapter {
     this.tableGroup.position.y = TABLE_SCENE_Y_LIFT;
   }
 
+  private async loadImportedCueStickFromManifest(): Promise<void> {
+    if (this.cueImportInFlight || this.cueMeshRoot != null) return;
+    this.cueImportInFlight = true;
+    try {
+      const slotKeys: { slot: CueAlbedoSlot; manifestKey: keyof typeof AssetManifest }[] = [
+        { slot: 'classic', manifestKey: AssetIds.texCueClassic },
+        { slot: 'street', manifestKey: AssetIds.texCueStreet },
+        { slot: 'pro', manifestKey: AssetIds.texCuePro },
+        { slot: 'neon', manifestKey: AssetIds.texCueNeon },
+      ];
+      for (const { slot, manifestKey } of slotKeys) {
+        const entry = AssetManifest[manifestKey];
+        if (!entry || entry.kind !== 'texture') continue;
+        const url = this.resolveAssetUrl(entry.browserUrl);
+        const tex = await this.tryLoadTextureUrl(url);
+        if (tex) this.cueAlbedoBySlot.set(slot, tex);
+      }
+
+      const meshEntry = AssetManifest[AssetIds.cueMesh as keyof typeof AssetManifest];
+      if (!meshEntry || meshEntry.kind !== 'model') return;
+
+      const fbxUrl = this.resolveAssetUrl(meshEntry.browserUrl);
+      const loader = new FBXLoader();
+      const fbx = await loader.loadAsync(fbxUrl);
+      if (this.adapterDisposed) {
+        this.disposeObject(fbx);
+        return;
+      }
+
+      this.normalizeCueFbxAlignedToProcedural(fbx);
+      fbx.traverse((o) => {
+        if (o instanceof THREE.Mesh) {
+          o.castShadow = true;
+          o.receiveShadow = true;
+        }
+      });
+
+      /** Ayrı node: normalize içindeki Euler (ör. z→y `rotation.x`) ile uç çevirisi çarpışmasın. */
+      const endFlip = new THREE.Group();
+      endFlip.name = 'cue.endFlip';
+      if (CUE_IMPORTED_END_FLIP === 'rx') endFlip.rotateX(Math.PI);
+      else if (CUE_IMPORTED_END_FLIP === 'rz') endFlip.rotateZ(Math.PI);
+      endFlip.add(fbx);
+
+      const root = new THREE.Group();
+      root.name = 'cue.importedRoot';
+      root.add(endFlip);
+      this.cueMeshRoot = root;
+      this.stripProceduralCueMeshesKeepHandHint();
+      this.cueGroup.add(root);
+      this.cueAppliedStyleId = null;
+    } catch (err) {
+      console.warn('[ThreeSceneAdapter] Cue.fbx / cue textures failed; procedural cue.', err);
+    } finally {
+      this.cueImportInFlight = false;
+    }
+  }
+
+  /** Longest bbox axis → +Y (toward cue ball), scale & place like procedural cue. */
+  private normalizeCueFbxAlignedToProcedural(root: THREE.Object3D): void {
+    root.position.set(0, 0, 0);
+    root.rotation.set(0, 0, 0);
+    root.scale.set(1, 1, 1);
+    root.updateMatrixWorld(true);
+    const b0 = new THREE.Box3().setFromObject(root);
+    const s0 = b0.getSize(new THREE.Vector3());
+    const m0 = Math.max(s0.x, s0.y, s0.z);
+    if (m0 < 1e-6) return;
+    let axis: 'x' | 'y' | 'z' = 'y';
+    if (s0.x >= s0.y && s0.x >= s0.z) axis = 'x';
+    else if (s0.z >= s0.x && s0.z >= s0.y) axis = 'z';
+    if (axis === 'x') root.rotation.z = Math.PI / 2;
+    else if (axis === 'z') root.rotation.x = -Math.PI / 2;
+    root.updateMatrixWorld(true);
+    const b1 = new THREE.Box3().setFromObject(root);
+    const s1 = b1.getSize(new THREE.Vector3());
+    const spanY = Math.max(s1.y, 1e-6);
+    const u = CUE_IMPORTED_TARGET_SPAN_Y / spanY;
+    root.scale.setScalar(u);
+    root.updateMatrixWorld(true);
+    const b2 = new THREE.Box3().setFromObject(root);
+    root.position.set(
+      -(b2.min.x + b2.max.x) * 0.5,
+      CUE_IMPORTED_TIP_LOCAL_Y - b2.max.y,
+      -(b2.min.z + b2.max.z) * 0.5,
+    );
+  }
+
+  private applyCueAlbedoMap(root: THREE.Object3D, tex: THREE.Texture): void {
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.needsUpdate = true;
+    root.traverse((o) => {
+      if (!(o instanceof THREE.Mesh)) return;
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      for (const raw of mats) {
+        if (!(raw instanceof THREE.Material)) continue;
+        if ('map' in raw) {
+          (raw as THREE.MeshStandardMaterial).map = tex;
+        }
+        if ('color' in raw && (raw as THREE.MeshStandardMaterial).color) {
+          (raw as THREE.MeshStandardMaterial).color.setHex(0xffffff);
+        }
+        if ('emissive' in raw && (raw as THREE.MeshStandardMaterial).emissive) {
+          (raw as THREE.MeshStandardMaterial).emissive.setHex(0x000000);
+        }
+        if ('emissiveIntensity' in raw) {
+          (raw as THREE.MeshStandardMaterial).emissiveIntensity = 0;
+        }
+        raw.needsUpdate = true;
+      }
+    });
+  }
+
+  private stripProceduralCueMeshesKeepHandHint(): void {
+    const keep = new Set(['cueHandHint']);
+    for (let i = this.cueGroup.children.length - 1; i >= 0; i--) {
+      const ch = this.cueGroup.children[i]!;
+      if (keep.has(ch.name)) continue;
+      this.cueGroup.remove(ch);
+      this.disposeObject(ch);
+    }
+    this.cueProceduralActive = false;
+  }
+
   private buildCueStick(): void {
     /**
      * Cue local axes: +Y points toward the cue ball (tip side), -Y is the butt.
@@ -1421,6 +1605,7 @@ export class ThreeSceneAdapter {
 
     this.attachCueHandHintSprite();
     this.cueGroup.visible = false;
+    this.cueProceduralActive = true;
     this.applyCueStyle('classic');
   }
 }

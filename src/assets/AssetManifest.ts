@@ -37,6 +37,49 @@ export const AssetManifest = {
     notes: 'Imported table mesh; physics bounds authored in Table.ts',
   },
 
+  'env.cueMesh': {
+    id: 'env.cueMesh',
+    kind: 'model',
+    browserUrl: 'assets/meshes/Cue.fbx',
+    futureMhsPath: '@Assets/Meshes/Cue',
+    sourceFormat: 'fbx',
+    unitScale: 1,
+    forwardAxis: '+Y',
+    upAxis: '+Y',
+    pivot: 'custom',
+    collision: 'none',
+    notes: 'Pool cue mesh; UV albedo per shop cue in `textures/cues/*.png`.',
+  },
+
+  'tex.cue.classic': {
+    id: 'tex.cue.classic',
+    kind: 'texture',
+    browserUrl: 'textures/cues/classic.png',
+    futureMhsPath: '@Assets/Textures/CueClassic',
+    sourceFormat: 'png',
+  },
+  'tex.cue.street': {
+    id: 'tex.cue.street',
+    kind: 'texture',
+    browserUrl: 'textures/cues/street.png',
+    futureMhsPath: '@Assets/Textures/CueStreet',
+    sourceFormat: 'png',
+  },
+  'tex.cue.pro': {
+    id: 'tex.cue.pro',
+    kind: 'texture',
+    browserUrl: 'textures/cues/pro.png',
+    futureMhsPath: '@Assets/Textures/CuePro',
+    sourceFormat: 'png',
+  },
+  'tex.cue.neon': {
+    id: 'tex.cue.neon',
+    kind: 'texture',
+    browserUrl: 'textures/cues/neon.png',
+    futureMhsPath: '@Assets/Textures/CueNeon',
+    sourceFormat: 'png',
+  },
+
   ...ballDiffuseEntries,
 
   'tex.ball.cue': {

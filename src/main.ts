@@ -36,6 +36,24 @@ window.addEventListener('keydown', (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   const el = e.target as HTMLElement | null;
   if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+
+  /**
+   * Debug "U" — wipe every player-side bit of data (profile, tutorial flag,
+   * aim-intro flag, leaderboard, roast telemetry) and re-enter the
+   * first-launch tutorial. Available in every phase, including MatchEnd, so
+   * it can rescue from any stuck state. Table layout is preserved.
+   */
+  if (e.key.toLowerCase() === 'u') {
+    e.preventDefault();
+    engine.debugWipePlayerData([
+      'roast.totalTriggered',
+      'roast.totalLevel1',
+      'roast.totalLevel2',
+      'roast.totalLevel3',
+    ]);
+    return;
+  }
+
   if (engine.phase === 'MatchEnd') return;
   if (e.key === '1') {
     e.preventDefault();

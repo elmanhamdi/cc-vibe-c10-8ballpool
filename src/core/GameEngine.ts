@@ -61,6 +61,7 @@ import {
   OPPONENT_REACTION_TTL_RANDOM_SEC,
   OPPONENT_TUNG_PLACEHOLDER_OFFSET_X,
   OPPONENT_TUNG_PLACEHOLDER_PAST_RAIL_Z,
+  OPPONENT_TORTA_TARTARUGA_WORLD_Y_OFFSET_EXTRA,
   OPPONENT_TUNG_WORLD_Y_OFFSET,
   PLAYER_SHOT_CLOCK_SEC,
   AI_THINK_MAX_SEC,
@@ -69,7 +70,13 @@ import { PoolInputState } from './PoolInputState.js';
 import { transformAt, uniformScale, vec3 } from '../world/Transform.js';
 import type { BallKind } from '../physics/Ball.js';
 import type { PlayerProfile, ProfileView } from './Profile.js';
-import { COIN_REWARD_WIN, computeRank, defaultProfile, hydrateProfile } from './Profile.js';
+import {
+  COIN_REWARD_LOSS,
+  COIN_REWARD_WIN,
+  computeRank,
+  defaultProfile,
+  hydrateProfile,
+} from './Profile.js';
 import {
   XP_REWARD_LOSS,
   XP_REWARD_PER_BALL_POTTED,
@@ -538,6 +545,53 @@ export class GameEngine implements Game {
     this.saveProfileToStorage();
   }
 
+  /**
+   * Debug helper: wipe ALL persistent player data — profile (coins, wins,
+   * losses, owned cues, XP), tutorial / aim-intro completion flags, and any
+   * caller-managed counters that match a list of well-known prefixes. Drops
+   * back to the first-launch flow (tutorial match) so the next frame is a
+   * clean start identical to a brand-new install. Table layout is preserved.
+   */
+  debugWipePlayerData(extraKeysToRemove: readonly string[] = []): void {
+    /** Drop persistent player data. Table layout (`poolTableLayoutJson`) is
+     *  intentionally not touched so the local dev workspace stays usable. */
+    const knownKeys: readonly string[] = [
+      PROFILE_STORAGE_KEY,
+      TUTORIAL_STORAGE_KEY,
+      AIM_INTRO_STORAGE_KEY,
+      'vertical-eight-ball.leaderboard.v1',
+    ];
+    for (const k of knownKeys) this.storage.removeItem(k);
+    for (const k of extraKeysToRemove) this.storage.removeItem(k);
+
+    /** Reset in-memory match state so nothing lingering keeps the old run. */
+    this.opponentReaction = null;
+    this.hudNotice = null;
+    this.matchEndOpponentPortrait = null;
+    this.pendingAI = null;
+    this.aiCueBallPlacementSlide = null;
+    this.dialogue.clearBubble();
+    this.eventQueue.length = 0;
+    this.tournament = null;
+    this.casualOpponentId = null;
+    this.tutorialAimIntroDismissedThisMatch = false;
+    this.tutorialAimIntroFirstPotHoldSec = 0;
+    this.tutorialAimIntroFirstPotDelayApplied = false;
+    this.tutorialEightBallIntroDismissedThisMatch = false;
+    this.tutorialEightBallIntroActive = false;
+    this.tutorialPlayerStrokesCompleted = 0;
+    this.aimIntroActive = false;
+    this.tutorialActive = false;
+    this.tutorialShootHint = false;
+
+    /** Reload from (now empty) storage → default profile, then enter the
+     *  first-launch flow (tutorial vs. tungo). */
+    this.profile = this.loadProfileFromStorage();
+    this.ensureEquippedStats();
+    this.saveProfileToStorage();
+    this.beginTutorialMatch();
+  }
+
   /** Debug helper: own all cues and equip the priciest one. */
   debugOwnAllCues(): void {
     const p = this.profile;
@@ -596,6 +650,9 @@ export class GameEngine implements Game {
     } else if (playerLost) {
       p.losses += 1;
       p.currentStreak = 0;
+      if (!isTournamentMatch) {
+        p.coins += COIN_REWARD_LOSS;
+      }
     }
     if (!isTournamentMatch) {
       p.xp = Math.max(0, p.xp + this.computeMatchXp(playerWon));
@@ -1766,6 +1823,7 @@ export class GameEngine implements Game {
        * for mid-tournament wins and the breakdown stays honest.
        */
       coinRewardWin: this.tournament != null ? 0 : COIN_REWARD_WIN,
+      coinRewardLoss: this.tournament != null ? 0 : COIN_REWARD_LOSS,
       profile: (() => {
         const acct = accountFromXp(profile.xp);
         return {
@@ -2121,10 +2179,11 @@ export class GameEngine implements Game {
           renderLayer: 'world',
         });
       } else if (opponentId === 'torta_tartaruga') {
+        const tortaFeltY = feltY + OPPONENT_TORTA_TARTARUGA_WORLD_Y_OFFSET_EXTRA;
         objects.push({
           objectId: 'opponent.tortaPlaceholder',
           templateId: AssetIds.opponentTortaPlaceholder,
-          transform: transformAt(vec3(OPPONENT_TUNG_PLACEHOLDER_OFFSET_X, feltY, tz), uniformScale(1)),
+          transform: transformAt(vec3(OPPONENT_TUNG_PLACEHOLDER_OFFSET_X, tortaFeltY, tz), uniformScale(1)),
           visible: true,
           lifetime: 'persistent',
           replication: 'localCosmetic',
@@ -2162,7 +2221,18 @@ export class GameEngine implements Game {
      */
     const CUE_TIP_OVERHANG = 20;
     const CUE_IDLE_GAP = 4;
-    const centerDist = cue.radius + shaftLen * 0.5 + CUE_TIP_OVERHANG + CUE_IDLE_GAP + pull;
+    /**
+     * Imported cue mesh tip sits slightly farther along +Y than the old procedural stack;
+     * without extra back-offset the stick reads as inside the cue ball at idle aim.
+     */
+    const CUE_STICK_EXTRA_BACK_OFFSET = 45;
+    const centerDist =
+      cue.radius +
+      shaftLen * 0.5 +
+      CUE_TIP_OVERHANG +
+      CUE_IDLE_GAP +
+      CUE_STICK_EXTRA_BACK_OFFSET +
+      pull;
     const cx = bx - dirx * centerDist;
     const cz = bz - dirz * centerDist;
 

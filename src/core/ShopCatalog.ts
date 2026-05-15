@@ -34,7 +34,7 @@ export const SHOP_CUE_CATALOG: readonly CueShopItem[] = [
   {
     id: 'street',
     name: 'Street Maple',
-    price: 80,
+    price: 899,
     description: 'Balanced starter upgrade',
     accent: '#b58b5a',
     preview: { shaft: '#c8a273', butt: '#6b4423', tip: '#4d6fa8' },
@@ -43,7 +43,7 @@ export const SHOP_CUE_CATALOG: readonly CueShopItem[] = [
   {
     id: 'pro',
     name: 'Pro Fiber',
-    price: 140,
+    price: 1899,
     description: 'Lightweight modern fiber build',
     accent: '#5cf0c2',
     preview: { shaft: '#e8efe9', butt: '#2c4d44', tip: '#3f6a98' },
@@ -52,7 +52,7 @@ export const SHOP_CUE_CATALOG: readonly CueShopItem[] = [
   {
     id: 'neon',
     name: 'Neon Glow',
-    price: 220,
+    price: 3499,
     description: 'Bright neon club finish',
     accent: '#ff6f91',
     preview: { shaft: '#ff6f91', butt: '#ff3d72', tip: '#3a2230' },

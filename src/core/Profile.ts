@@ -40,7 +40,10 @@ export interface ProfileView extends PlayerProfile {
   winRate: number;
 }
 
-export const COIN_REWARD_WIN = 50;
+/** Coins for winning a casual / career match (not tournaments; see `TournamentCatalog`). */
+export const COIN_REWARD_WIN = 120;
+/** Small consolation when you lose a casual match (tournament losses pay nothing). */
+export const COIN_REWARD_LOSS = 35;
 
 export const RANKS: RankDef[] = [
   { id: 'bronze', name: 'Bronze', minWins: 0 },
@@ -52,7 +55,8 @@ export const RANKS: RankDef[] = [
 
 export function defaultProfile(): PlayerProfile {
   return {
-    coins: 300,
+    /** Enough for a rookie entry + buffer after the economy rebalance. */
+    coins: 420,
     wins: 0,
     losses: 0,
     currentStreak: 0,

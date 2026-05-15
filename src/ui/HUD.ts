@@ -4,7 +4,8 @@ import type { GamePhase } from '../core/types.js';
 import { AssetManifest } from '../assets/AssetManifest.js';
 import { AssetIds } from '../assets/AssetIds.js';
 import { resolveBrowserAssetUrl } from '../assets/resolveBrowserAssetUrl.js';
-import { XP_REWARD_LOSS, XP_REWARD_WIN } from '../core/AccountLevel.js';
+import { XP_REWARD_LOSS, XP_REWARD_PER_BALL_POTTED, XP_REWARD_WIN } from '../core/AccountLevel.js';
+import { COIN_REWARD_LOSS, COIN_REWARD_WIN } from '../core/Profile.js';
 import { SHOP_CUE_CATALOG } from '../core/ShopCatalog.js';
 import { portraitReactionAssetId } from '../opponents/opponentPortraitReactions.js';
 import type { StorageAdapter } from '../core/StorageAdapter.js';
@@ -59,6 +60,7 @@ export class HUD {
   private readonly menu: HTMLElement;
   private readonly end: HTMLElement;
   private readonly endReward: HTMLElement;
+  private readonly endRewardLabel: HTMLElement;
   private readonly endBalance: HTMLElement;
   /** End-screen headline assets replace plain YOU WON / YOU LOST text. */
   private readonly endTitleWrap: HTMLElement;
@@ -75,14 +77,16 @@ export class HUD {
   private readonly urlEndNextGame: string;
   private readonly btnShop: HTMLButtonElement;
   private readonly confettiLayer: HTMLElement;
-  /** Champion banner: trophy, big earned chips, and total balances. Tournament-final only. */
+  /** Legacy row (CSS trophy + tier label) — hidden; tier cup art is `end-mode-win-badge` (`Win_*.png`). */
   private readonly endChampion: HTMLElement;
-  private readonly endChampionName: HTMLElement;
   private readonly endChampionPrize: HTMLElement;
   private readonly championEarnedCoin: HTMLElement;
   private readonly championEarnedXp: HTMLElement;
   private readonly championTotalCoin: HTMLElement;
   private readonly championTotalXp: HTMLElement;
+  private readonly urlChampionRibbonMatch: string;
+  private readonly urlChampionRibbonTournament: string;
+  private readonly endChampionRibbonImg: HTMLImageElement;
   private readonly nextModal: HTMLElement;
   private readonly nextAvatar: HTMLImageElement;
   private readonly nextName: HTMLElement;
@@ -142,8 +146,20 @@ export class HUD {
   private readonly tournamentStartLabel: HTMLElement;
   private readonly tournamentEntryFeeEl: HTMLElement;
   private readonly tournamentEntryFeeNumEl: HTMLElement;
+  private readonly tournamentChampionPrizeEl: HTMLElement;
   private readonly tournamentExitBtn: HTMLButtonElement;
   private tournamentVisible = false;
+  /**
+   * "Casual Showcase" overlay — replaces the legacy mode-select page when the
+   * player taps PLAY from the main menu hub. Shows a single anonymous
+   * opponent silhouette and a free "Start Game" CTA. The actual opponent id
+   * is still rolled inside `beginCareer` (server-side), so nothing about who
+   * the player will face leaks through the DOM — this is the "anonim" intent.
+   */
+  private readonly casualOverlay: HTMLElement;
+  private readonly casualStartBtn: HTMLButtonElement;
+  private readonly casualBackBtn: HTMLButtonElement;
+  private casualVisible = false;
   /** Top-of-match strip showing tournament name + bracket dots + counter. */
   private readonly tournamentStrip: HTMLElement;
   private readonly tournamentStripName: HTMLElement;
@@ -381,8 +397,9 @@ export class HUD {
     this.bubble = el('div', 'bubble');
     this.bubble.innerHTML = `<div id="bubble-text" class="bubble-text"></div>`;
 
+    this.urlChampionRibbonMatch = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/champion_match.png');
+    this.urlChampionRibbonTournament = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/champion_tournament.png');
     this.end = el('div', 'panel end interactive');
-    const championRibbonUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/champion_match.png');
     const endPlayCtaUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/Button_Play_new.png');
     const endPlayAgainUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/play_again.png');
     this.urlEndNextGame = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/next-game.png');
@@ -397,7 +414,7 @@ export class HUD {
           <img
             id="end-champion-ribbon-img"
             class="end-champion-ribbon-img"
-            src="${championRibbonUrl}"
+            src="${this.urlChampionRibbonMatch}"
             alt=""
             decoding="async"
             draggable="false"
@@ -405,10 +422,7 @@ export class HUD {
         </div>
       </div>
       <div class="end-card">
-        <div id="end-champion" class="end-champion" data-active="false" aria-hidden="true">
-          <div class="end-champion-trophy" aria-hidden="true"></div>
-          <div class="end-champion-name" id="end-champion-name">Tournament</div>
-        </div>
+        <div id="end-champion" class="end-champion" data-active="false" aria-hidden="true"></div>
         <div id="end-player-name" class="end-player-name">
           <span id="end-player-name-text" class="end-player-name-text">You</span>
           <img
@@ -454,7 +468,7 @@ export class HUD {
         </div>
         <div class="end-coins">
           <div class="end-coins-row">
-            <span class="end-coins-label">Reward</span>
+            <span class="end-coins-label" id="end-reward-label">Reward</span>
             <span id="end-reward" class="end-coins-value">+0</span>
           </div>
           <div class="end-coins-row">
@@ -491,6 +505,7 @@ export class HUD {
       <div id="confetti-layer" class="confetti-layer" aria-hidden="true"></div>
     `;
     this.endReward = this.end.querySelector('#end-reward') as HTMLElement;
+    this.endRewardLabel = this.end.querySelector('#end-reward-label') as HTMLElement;
     this.endBalance = this.end.querySelector('#end-balance') as HTMLElement;
     this.endTitleWrap = this.end.querySelector('#end-title-wrap') as HTMLElement;
     this.endTitleImg = this.end.querySelector('#end-title-img') as HTMLImageElement;
@@ -507,12 +522,12 @@ export class HUD {
     this.btnShop = this.end.querySelector('#btn-shop') as HTMLButtonElement;
     this.confettiLayer = this.end.querySelector('#confetti-layer') as HTMLElement;
     this.endChampion = this.end.querySelector('#end-champion') as HTMLElement;
-    this.endChampionName = this.end.querySelector('#end-champion-name') as HTMLElement;
     this.endChampionPrize = this.end.querySelector('#end-champion-prize') as HTMLElement;
     this.championEarnedCoin = this.end.querySelector('#champion-earned-coin') as HTMLElement;
     this.championEarnedXp = this.end.querySelector('#champion-earned-xp') as HTMLElement;
     this.championTotalCoin = this.end.querySelector('#champion-total-coin') as HTMLElement;
     this.championTotalXp = this.end.querySelector('#champion-total-xp') as HTMLElement;
+    this.endChampionRibbonImg = this.end.querySelector('#end-champion-ribbon-img') as HTMLImageElement;
 
     this.statsOverlay = el('div', 'hud-stats-overlay');
     this.statsOverlay.innerHTML = `
@@ -664,6 +679,7 @@ export class HUD {
           <div class="modeselect-spacer" aria-hidden="true"></div>
         </div>
         <div class="hud-tournament-slots" id="hud-tournament-slots"></div>
+        <p id="hud-tournament-champion-prize" class="hud-tournament-champion-prize" aria-live="polite"></p>
         <button class="hud-tournament-start interactive" id="hud-tournament-start" type="button" aria-label="Start Match 1">
           <span class="hud-tournament-start-inner">
             <img class="hud-tournament-start-plate" src="${tournamentPlayIcon}" alt="" decoding="async" draggable="false" />
@@ -685,7 +701,81 @@ export class HUD {
     this.tournamentStartLabel = this.tournamentOverlay.querySelector('#hud-tournament-start-label') as HTMLElement;
     this.tournamentEntryFeeEl = this.tournamentOverlay.querySelector('#hud-tournament-entry-fee') as HTMLElement;
     this.tournamentEntryFeeNumEl = this.tournamentOverlay.querySelector('#hud-tournament-entry-fee-num') as HTMLElement;
+    this.tournamentChampionPrizeEl = this.tournamentOverlay.querySelector('#hud-tournament-champion-prize') as HTMLElement;
     this.tournamentExitBtn = this.tournamentOverlay.querySelector('#hud-tournament-exit') as HTMLButtonElement;
+
+    /**
+     * Casual showcase overlay — single anonymous opponent + reward chips +
+     * Start Game CTA. Reuses the same `button-start.png` plate as the
+     * tournament Start button to stay visually consistent. The avatar is
+     * pure CSS (`?` glyph on a radial gradient) so no opponent image is
+     * preloaded — guarantees the matchup stays a surprise until in-match.
+     */
+    const casualStartPlate = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/button-start.png');
+    this.casualOverlay = el('div', 'hud-casual-overlay');
+    this.casualOverlay.setAttribute('role', 'dialog');
+    this.casualOverlay.setAttribute('aria-modal', 'true');
+    this.casualOverlay.setAttribute('aria-label', 'Casual match — mystery opponent');
+    this.casualOverlay.innerHTML = `
+      <div class="hud-casual-overlay-bg" aria-hidden="true"></div>
+      <div class="hud-casual-overlay-fx" aria-hidden="true"></div>
+      <div class="hud-casual-modal">
+        <div class="hud-casual-header">
+          <button class="modeselect-back hud-casual-back" id="hud-casual-exit" type="button" aria-label="Back to main menu">
+            <span class="modeselect-back-glyph" aria-hidden="true"></span>
+            <span class="modeselect-back-label">Back</span>
+          </button>
+          <div class="hud-casual-head-center">
+            <div class="hud-casual-title">Casual Match</div>
+            <div class="hud-casual-kicker">Free play</div>
+          </div>
+          <span class="modeselect-spacer" aria-hidden="true"></span>
+        </div>
+        <div class="hud-casual-stage">
+          <div class="hud-casual-opponent">
+            <div class="hud-casual-anon-avatar" aria-hidden="true">
+              <span class="hud-casual-anon-avatar-ring" aria-hidden="true"></span>
+              <span class="hud-casual-anon-avatar-glyph">?</span>
+            </div>
+            <div class="hud-casual-anon-meta">
+              <div class="hud-casual-anon-name">???</div>
+              <div class="hud-casual-anon-sub">Mystery Opponent</div>
+            </div>
+          </div>
+          <div class="hud-casual-rewards" role="group" aria-label="Match rewards">
+            <div class="hud-casual-rewards-label">Match rewards</div>
+            <div class="hud-casual-rewards-row">
+              <div class="hud-casual-reward-pill hud-casual-reward-pill--coin">
+                <img class="hud-casual-reward-icon" src="${escapeHtml(this.coinIconUrl)}" alt="" width="26" height="26" decoding="async" draggable="false" />
+                <span class="hud-casual-reward-num">+${formatNumber(COIN_REWARD_WIN)}</span>
+                <span class="hud-casual-reward-unit">coins on win</span>
+              </div>
+              <div class="hud-casual-reward-pill hud-casual-reward-pill--coin hud-casual-reward-pill--muted">
+                <img class="hud-casual-reward-icon" src="${escapeHtml(this.coinIconUrl)}" alt="" width="26" height="26" decoding="async" draggable="false" />
+                <span class="hud-casual-reward-num">+${formatNumber(COIN_REWARD_LOSS)}</span>
+                <span class="hud-casual-reward-unit">if you lose</span>
+              </div>
+              <div class="hud-casual-reward-pill hud-casual-reward-pill--xp">
+                <span class="hud-casual-reward-xp-badge" aria-hidden="true">XP</span>
+                <span class="hud-casual-reward-num">+${formatNumber(XP_REWARD_WIN)}</span>
+                <span class="hud-casual-reward-unit">base on win</span>
+              </div>
+            </div>
+            <div class="hud-casual-rewards-sub">+${formatNumber(XP_REWARD_PER_BALL_POTTED)} XP per ball you pocket · +${formatNumber(XP_REWARD_LOSS)} XP if you lose (still counts balls)</div>
+          </div>
+        </div>
+        <button class="hud-casual-start interactive" id="hud-casual-start" type="button" aria-label="Start game">
+          <span class="hud-casual-start-inner">
+            <img class="hud-casual-start-plate" src="${casualStartPlate}" alt="" decoding="async" draggable="false" />
+            <span class="hud-casual-start-overlay-col">
+              <span class="hud-casual-start-label">Start Game</span>
+            </span>
+          </span>
+        </button>
+      </div>
+    `;
+    this.casualStartBtn = this.casualOverlay.querySelector('#hud-casual-start') as HTMLButtonElement;
+    this.casualBackBtn = this.casualOverlay.querySelector('#hud-casual-exit') as HTMLButtonElement;
 
     this.nextModal = el('div', 'hud-next-overlay');
     this.nextModal.innerHTML = `
@@ -868,6 +958,7 @@ export class HUD {
       this.achievementsOverlay,
       this.modeSelectOverlay,
       this.tournamentOverlay,
+      this.casualOverlay,
       this.matchIntro,
       this.spinPopupOverlay,
       this.hudNotice,
@@ -1166,11 +1257,41 @@ export class HUD {
 
     this.menuPlayBtn.addEventListener('click', () => {
       this.playHudClickSound();
-      this.showModeSelectOverlay('casual');
+      this.showCasualShowcaseOverlay();
     });
     this.menuTournamentsBtn.addEventListener('click', () => {
       this.playHudClickSound();
       this.showModeSelectOverlay('tournaments');
+    });
+
+    /** Casual showcase: Start Game → fire the same `menu.startCasual` command
+     *  the legacy mode-select casual CTA fires. Engine rolls the random
+     *  opponent inside `beginCareer`, preserving the surprise. */
+    this.casualStartBtn.addEventListener('click', () => {
+      this.playHudClickSound();
+      this.hideCasualShowcaseOverlay();
+      this.pushCommand({ type: 'menu.startCasual' });
+    });
+    this.casualBackBtn.addEventListener('click', () => {
+      this.playHudClickSound();
+      this.hideCasualShowcaseOverlay();
+    });
+    /** Tapping the dim scrim (anything outside `.hud-casual-modal`) closes
+     *  the showcase back to the main menu — matches mobile expectation. */
+    this.casualOverlay.addEventListener('click', (e) => {
+      if (!this.casualVisible) return;
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      if (target.closest('.hud-casual-modal')) return;
+      this.playHudClickSound();
+      this.hideCasualShowcaseOverlay();
+    });
+    /** Escape closes the showcase like every other dialog in this HUD. */
+    window.addEventListener('keydown', (e) => {
+      if (!this.casualVisible) return;
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      this.hideCasualShowcaseOverlay();
     });
     this.menuLeaderboardBtn.addEventListener('click', () => {
       this.playHudClickSound();
@@ -1490,12 +1611,13 @@ export class HUD {
     this.hideShopOverlay();
 
     /**
-     * Mode-select / bracket overlays only make sense in the menu/end-card
-     * phases — once an actual match is in progress we force-hide them so the
-     * play table stays interactive.
+     * Mode-select / bracket / casual-showcase overlays only make sense in
+     * the menu/end-card phases — once an actual match is in progress we
+     * force-hide them so the play table stays interactive.
      */
     this.hideTournamentOverlay();
     this.hideModeSelectOverlay();
+    this.hideCasualShowcaseOverlay();
 
     const fullScreenShotTutorialOn =
       eb.aimIntro?.visible === true || eb.eightBallIntro?.visible === true;
@@ -2342,12 +2464,22 @@ export class HUD {
             </div>
           </div>
           <div class="modeselect-prize">
-            <div class="modeselect-prize-label">XP</div>
+            <div class="modeselect-prize-label">Casual payouts</div>
             <div class="modeselect-prize-line">
-              <span class="modeselect-prize-num">+${formatNumber(XP_REWARD_WIN)}</span>
-              <span class="modeselect-prize-unit">XP</span>
+              <span class="modeselect-prize-num">+${formatNumber(COIN_REWARD_WIN)}</span>
+              <span class="modeselect-prize-unit">coins</span>
+              <span class="modeselect-prize-sep" aria-hidden="true">·</span>
+              <span class="modeselect-prize-num">+${formatNumber(COIN_REWARD_LOSS)}</span>
+              <span class="modeselect-prize-unit">if you lose</span>
             </div>
-            <div class="modeselect-prize-sub">per win</div>
+            <div class="modeselect-prize-line modeselect-prize-line--secondary">
+              <span class="modeselect-prize-num">+${formatNumber(XP_REWARD_WIN)}</span>
+              <span class="modeselect-prize-unit">XP win</span>
+              <span class="modeselect-prize-sep" aria-hidden="true">·</span>
+              <span class="modeselect-prize-num">+${formatNumber(XP_REWARD_LOSS)}</span>
+              <span class="modeselect-prize-unit">XP loss</span>
+            </div>
+            <div class="modeselect-prize-sub">+${formatNumber(XP_REWARD_PER_BALL_POTTED)} XP per ball you pocket · tournaments pay only the champion bonus</div>
           </div>
           <div class="modeselect-fee-row">
             <div class="modeselect-fee modeselect-fee-free modeselect-fee--wide">FREE TO PLAY</div>
@@ -2395,12 +2527,16 @@ export class HUD {
             </div>
           </div>
           <div class="modeselect-prize">
-            <div class="modeselect-prize-label">CHAMPION BONUS</div>
+            <div class="modeselect-prize-label">Champion payout (final win)</div>
             <div class="modeselect-prize-line">
+              <span class="modeselect-prize-num">+${formatNumber(def.championBonusCoins)}</span>
+              <span class="modeselect-prize-unit">coins</span>
+            </div>
+            <div class="modeselect-prize-line modeselect-prize-line--secondary">
               <span class="modeselect-prize-num">+${formatNumber(def.championBonusXp)}</span>
               <span class="modeselect-prize-unit">XP</span>
             </div>
-            <div class="modeselect-prize-sub">if you clear the bracket</div>
+            <div class="modeselect-prize-sub">No coins or XP for mid-bracket wins · Net coins if you win all: +${formatNumber(Math.max(0, def.championBonusCoins - def.entryFeeCoins))}</div>
           </div>
           <div class="modeselect-hero modeselect-hero--trophy" aria-hidden="true">
             <div class="modeselect-hero-bloom" aria-hidden="true"></div>
@@ -2425,6 +2561,8 @@ export class HUD {
       this.tournamentEntryFeeEl.hidden = true;
       this.tournamentEntryFeeEl.removeAttribute('aria-label');
       this.tournamentEntryFeeNumEl.textContent = '';
+      this.tournamentChampionPrizeEl.textContent = '';
+      this.tournamentChampionPrizeEl.hidden = true;
       this.tournamentOverlay.setAttribute('data-accent', 'pro');
       this.tournamentTitleRow.setAttribute('aria-label', 'Tournament Bracket');
       this.tournamentCupImg.alt = '';
@@ -2529,6 +2667,15 @@ export class HUD {
           </div>`;
       })
       .join('');
+    const netCoins = Math.max(0, (t.championBonusCoins ?? 0) - (t.entryFeeCoins ?? 0));
+    this.tournamentChampionPrizeEl.hidden = false;
+    if (t.status === 'won') {
+      this.tournamentChampionPrizeEl.textContent = `Champion bonus earned: +${formatNumber(t.championBonusCoins)} coins and +${formatNumber(t.championBonusXp)} XP (no per-round payouts).`;
+    } else if (t.status === 'lost') {
+      this.tournamentChampionPrizeEl.textContent = `Champion reward was +${formatNumber(t.championBonusCoins)} coins and +${formatNumber(t.championBonusXp)} XP. Mid-round wins pay no coins or XP.`;
+    } else {
+      this.tournamentChampionPrizeEl.textContent = `Win the final match for +${formatNumber(t.championBonusCoins)} coins and +${formatNumber(t.championBonusXp)} XP. Earlier wins pay nothing. Net if you sweep: +${formatNumber(netCoins)} coins after your entry fee.`;
+    }
   }
 
   private showTournamentOverlay(): void {
@@ -2540,6 +2687,32 @@ export class HUD {
   private hideTournamentOverlay(): void {
     this.tournamentVisible = false;
     this.tournamentOverlay.classList.remove('show');
+  }
+
+  private showCasualShowcaseOverlay(): void {
+    /**
+     * Only meaningful from the main menu hub; bail out gracefully if some
+     * other phase (match in progress, end card, tutorial) accidentally
+     * triggers this — we never want it to layer over gameplay.
+     */
+    const phase = this.getHud().eightBall?.phase;
+    if (phase !== 'MainMenu') return;
+    this.casualVisible = true;
+    this.casualOverlay.classList.add('show');
+    /** Move keyboard focus to the primary CTA so Enter/Space immediately
+     *  starts the match (mirrors tournament Start UX). */
+    requestAnimationFrame(() => {
+      try {
+        this.casualStartBtn.focus({ preventScroll: true });
+      } catch {
+        /* ignore focus errors in older browsers */
+      }
+    });
+  }
+
+  private hideCasualShowcaseOverlay(): void {
+    this.casualVisible = false;
+    this.casualOverlay.classList.remove('show');
   }
 
   private hideStatsOverlay(): void {
@@ -2755,7 +2928,7 @@ export class HUD {
     if (isTournamentChamp) {
       const bonusCoin = t?.championBonusCoins ?? 0;
       const bonusXp = t?.championBonusXp ?? 0;
-      sub.textContent = `Champion bonus +${formatNumber(bonusCoin)} coin · +${formatNumber(bonusXp)} XP`;
+      sub.textContent = `Champion bonus +${formatNumber(bonusCoin)} coins · +${formatNumber(bonusXp)} XP`;
     } else if (isTournamentMidWin && t) {
       sub.textContent = `Match ${t.currentRound} of ${t.size} cleared — ${reason}`;
     } else if (isTournamentLoss && t) {
@@ -2803,22 +2976,36 @@ export class HUD {
     /** Shop + Next / Home — Play Again ekstra; Next’i asla gizleme (turnuva ara tur vb.). */
     this.btnNext.style.display = won ? 'inline-flex' : 'none';
     this.btnRematch.style.display = won ? 'none' : 'inline-flex';
-    const reward = won ? h.coinRewardWin ?? 0 : 0;
-    /** Champion bonus is awarded by the engine; surface it in the reward chip too. */
-    const champBonus = isTournamentChamp ? t?.championBonusCoins ?? 0 : 0;
-    const rewardTotal = reward + champBonus;
-    this.endReward.innerHTML = `${rewardTotal > 0 ? '+' : ''}${formatNumber(rewardTotal)}${this.coinIconImg('hud-inline-coin-icon hud-inline-coin-icon--end-screen', 18)}`;
+    const coinIconEnd = this.coinIconImg('hud-inline-coin-icon hud-inline-coin-icon--end-screen', 18);
+    if (!isTournamentChamp) {
+      if (won && isTournamentMidWin) {
+        this.endRewardLabel.textContent = 'Coins & XP';
+        this.endReward.textContent = 'Paid when you win the final';
+      } else if (won && !t) {
+        this.endRewardLabel.textContent = 'Match reward';
+        const rw = h.coinRewardWin ?? 0;
+        this.endReward.innerHTML = `+${formatNumber(rw)}${coinIconEnd}`;
+      } else if (!won && !t) {
+        this.endRewardLabel.textContent = 'Consolation';
+        const rl = h.coinRewardLoss ?? 0;
+        this.endReward.innerHTML = `+${formatNumber(rl)}${coinIconEnd}`;
+      } else if (!won && t) {
+        this.endRewardLabel.textContent = 'Coin payout';
+        this.endReward.textContent = '—';
+      } else {
+        this.endRewardLabel.textContent = 'Reward';
+        this.endReward.textContent = '—';
+      }
+    }
     const coins = h.profile?.coins ?? 0;
     this.endBalance.innerHTML = `${formatNumber(coins)}${this.coinIconImg('hud-inline-coin-icon hud-inline-coin-icon--end-screen', 18)}`;
 
     /**
-     * Champion celebration: a single big "earned" chip (coin + XP) plus
-     * lifetime totals. Tournament rounds don't pay per-match, so the only
-     * earnings here are the championship bonus, which keeps the math simple
-     * and the visual punchy.
+     * Champion celebration: earned chip (coin + XP) + totals. Synthetic trophy
+     * row stays off — tier cup art is only `end-mode-win-badge` (`Win_*.png`).
      */
-    this.endChampion.setAttribute('data-active', isTournamentChamp ? 'true' : 'false');
-    this.endChampion.setAttribute('aria-hidden', isTournamentChamp ? 'false' : 'true');
+    this.endChampion.setAttribute('data-active', 'false');
+    this.endChampion.setAttribute('aria-hidden', 'true');
     this.endChampionPrize.setAttribute('data-active', isTournamentChamp ? 'true' : 'false');
     this.endChampionPrize.setAttribute('aria-hidden', isTournamentChamp ? 'false' : 'true');
     /** Champions get a hero treatment — hide the standard reward/balance rows. */
@@ -2827,9 +3014,7 @@ export class HUD {
     if (isTournamentChamp && t) {
       const accent = t.defAccent ?? 'pro';
       this.end.setAttribute('data-champion-accent', accent);
-      this.endChampion.setAttribute('data-accent', accent);
       this.endChampionPrize.setAttribute('data-accent', accent);
-      this.endChampionName.textContent = t.defName ?? 'Tournament';
 
       const earnedCoins = t.championBonusCoins ?? 0;
       const earnedXp = t.championBonusXp ?? 0;
@@ -2851,7 +3036,10 @@ export class HUD {
 
     const ribbonWrap = this.end.querySelector('#end-champion-ribbon-wrap') as HTMLElement | null;
     const ribbonSurface = this.end.querySelector('.end-champion-ribbon-surface') as HTMLElement | null;
-    /** "MATCH CHAMPION" banner should appear on every victory end-screen. */
+    const ribbonUrl = isTournamentChamp ? this.urlChampionRibbonTournament : this.urlChampionRibbonMatch;
+    this.endChampionRibbonImg.src = ribbonUrl;
+    this.endChampionRibbonImg.alt = isTournamentChamp ? 'Tournament champion' : 'Match champion';
+    /** Şerit: normal galibiyette MATCH CHAMPION; turnuva şampiyonluğunda TOURNAMENT CHAMPION görseli. */
     const showChampionRibbon = won;
     this.end.classList.toggle('end--champion-ribbon', showChampionRibbon);
     if (ribbonWrap) {
@@ -2870,11 +3058,22 @@ export class HUD {
     }
     if (xpDelta) {
       if (won) {
-        const xpAmt = isTournamentChamp && t ? (t.championBonusXp ?? 0) : XP_REWARD_WIN;
-        xpDelta.textContent = `+${formatNumber(xpAmt)} EXP`;
-        xpDelta.classList.add('end-xp-delta--win');
+        if (isTournamentChamp && t) {
+          xpDelta.textContent = `+${formatNumber(t.championBonusXp ?? 0)} EXP`;
+          xpDelta.classList.add('end-xp-delta--win');
+        } else if (isTournamentMidWin) {
+          xpDelta.textContent = 'XP on champion win only';
+          xpDelta.classList.remove('end-xp-delta--win');
+        } else {
+          xpDelta.textContent = `+${formatNumber(XP_REWARD_WIN)} EXP (win)`;
+          xpDelta.classList.add('end-xp-delta--win');
+        }
       } else {
-        xpDelta.textContent = `+${formatNumber(XP_REWARD_LOSS)} EXP`;
+        if (t) {
+          xpDelta.textContent = 'No XP (tournament)';
+        } else {
+          xpDelta.textContent = `+${formatNumber(XP_REWARD_LOSS)} EXP`;
+        }
         xpDelta.classList.remove('end-xp-delta--win');
       }
     }
@@ -2918,6 +3117,7 @@ export class HUD {
     this.hideAchievementsOverlay();
     this.hideModeSelectOverlay();
     this.hideTournamentOverlay();
+    this.hideCasualShowcaseOverlay();
     this.hideMatchIntro();
     this.hideHudNotice();
     this.ballInHandHintLabel.classList.remove('show');

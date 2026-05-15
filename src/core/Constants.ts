@@ -81,5 +81,7 @@ export const OPPONENT_TUNG_PLACEHOLDER_PAST_RAIL_Z = 44;
 export const OPPONENT_TUNG_PLACEHOLDER_OFFSET_X = 0;
 /** Felt tabanına göre ekstra Y (negatif = karakter aşağı). */
 export const OPPONENT_TUNG_WORLD_Y_OFFSET = -358;
+/** Torta Tartaruga rig’i diğerlerine göre biraz aşağıda; sadece bu rakip için dünya Y’ye eklenir (pozitif = yukarı). */
+export const OPPONENT_TORTA_TARTARUGA_WORLD_Y_OFFSET_EXTRA = 52;
 /** FBX yüksekliği bu hedefe ölçeklenir (dünya birimi; taban ~165 × 3). */
 export const OPPONENT_TUNG_MODEL_TARGET_HEIGHT = 420;

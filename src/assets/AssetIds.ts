@@ -2,6 +2,11 @@
 
 export const AssetIds = {
   tableMesh: 'env.tableMesh',
+  cueMesh: 'env.cueMesh',
+  texCueClassic: 'tex.cue.classic',
+  texCueStreet: 'tex.cue.street',
+  texCuePro: 'tex.cue.pro',
+  texCueNeon: 'tex.cue.neon',
   ballCue: 'ball.cue',
   ballEight: 'ball.eight',
   ballSolid: (n: number) => `ball.solid.${n}` as const,

@@ -228,6 +228,14 @@ export function resolveEightBallRules(input: {
     continueTurn = pottedMeta.some((b) => kindToGroup(b.kind) === shooterGroupNow);
   }
 
+  /**
+   * House rule requested: after the opening break, turn always passes.
+   * Group assignment can still happen from potted balls on the break.
+   */
+  if (isBreakShot) {
+    continueTurn = false;
+  }
+
   return {
     nextTurn: continueTurn ? shooter : opponent,
     continueWithSamePlayer: continueTurn,

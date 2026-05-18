@@ -998,7 +998,23 @@ Before considering the Three.js prototype MHS-port-ready:
 - [ ] No required behavior depends on browser-only shaders, DOM layout, CSS
   animation, or Three.js scene traversal.
 
-## 16. Quick Reference
+## 16. Browser-Only Visual Parity Notes
+
+When the browser build uses renderer/CSS-only visuals, document an explicit MHS
+equivalent so gameplay readability survives the port:
+
+- `render-three/ThreeSceneAdapter.ts` `onBeforeCompile` ball-roll tint:
+  map to a material graph operation (object-space sinusoidal tint) or disable by
+  default behind a feature flag.
+- Stripe-ball shader cap blend:
+  implement via layered material/mask in Studio rather than relying on
+  `onBeforeCompile`.
+- `styles.css` opponent reaction cross-screen animations:
+  port as timeline clips driven by `HudState.eightBall.opponentReaction.durationSec`.
+- Any CSS animation tied to gameplay timing:
+  source timing from `HudState`/events only, never from hard-coded DOM-only clocks.
+
+## 17. Quick Reference
 
 Three.js to MHS concept map:
 

@@ -1,14 +1,17 @@
 import * as THREE from 'three';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import type { BallKind } from '../physics/Ball.js';
-import { Table } from '../physics/Table.js';
 import { AssetManifest } from '../assets/AssetManifest.js';
 import { AssetIds } from '../assets/AssetIds.js';
-import { OPPONENT_TUNG_MODEL_TARGET_HEIGHT } from '../core/Constants.js';
 import { resolveBrowserAssetUrl } from '../assets/resolveBrowserAssetUrl.js';
+import handCursorTapPngUrl from '../ui/hand-cursor-tap.png';
 import type { RenderRuntimeHints } from '../core/gameContract.js';
-import type { PolylineObjectState, RenderWorldState, WorldObjectState } from '../world/renderTypes.js';
+import type {
+  PolylineObjectState,
+  RenderWorldState,
+  TableGeometryData,
+  WorldObjectState,
+} from '../world/renderTypes.js';
 
 /** `Table.glb` Y ölçeği — model ince kalıyorsa artır (fizik 2D, yalnızca görsel). */
 const TABLE_MESH_Y_THICKNESS_MUL = 1.4;
@@ -46,6 +49,7 @@ const CUE_IMPORTED_TARGET_SPAN_Y = 374;
  * Hâlâ ters görünüyorsa `'rz'` veya `'none'` dene.
  */
 const CUE_IMPORTED_END_FLIP: 'rx' | 'rz' | 'none' = 'rx';
+type BallKind = 'cue' | 'eight' | 'solid' | 'stripe';
 
 type CueAlbedoSlot = 'classic' | 'street' | 'pro' | 'neon';
 
@@ -62,6 +66,7 @@ const TUNG_BACK_WALL_HEIGHT_MODEL_MUL = 17.6;
 const TUNG_BACK_WALL_Y_PULL_DOWN = 56;
 const TUNG_BACK_WALL_TEX_REPEAT_X = 41.6;
 const TUNG_BACK_WALL_TEX_REPEAT_Y = 54.4;
+const OPPONENT_MODEL_TARGET_HEIGHT = 420;
 
 /** Pocket drop VFX: slide toward pocket center, then fall + shrink (render-only). */
 const POCKET_SLIDE_SEC = 0.12;
@@ -71,8 +76,8 @@ const POCKET_DROP_DEPTH_R = 3.2;
 export type ThreeSceneAdapterOptions = {
   /** Vite `import.meta.env.BASE_URL` for `public/` textures and GLB fallbacks. */
   assetBaseUrl?: string;
-  /** Same instance as game physics so rails/pockets match after URL/localStorage tuning. */
-  physicsTable?: Table;
+  /** Optional render-only table geometry projection (avoids direct physics module dependency). */
+  tableGeometry?: TableGeometryData;
 };
 
 /**
@@ -89,6 +94,8 @@ export class ThreeSceneAdapter {
   private readonly ndc = new THREE.Vector2();
   private readonly objectById = new Map<string, THREE.Object3D>();
   private readonly polylineById = new Map<string, THREE.Line>();
+  private readonly pooledObjectIds = new Set<string>();
+  private readonly pooledPolylineIds = new Set<string>();
   private readonly ballGeo: THREE.SphereGeometry;
   /** Per-ball rolling quaternion (render); integrated from `tableVelocity` + real frame dt. */
   private readonly ballRollQuat = new Map<string, THREE.Quaternion>();
@@ -135,9 +142,17 @@ export class ThreeSceneAdapter {
   /** Büyük zemin; `tableGroup.clear()` bunu silmez (sahne kökünde). */
   private floorMesh: THREE.Mesh | null = null;
   private floorTexture: THREE.Texture | null = null;
-  private readonly physicsTable: Table;
+  private tableGeometry: TableGeometryData = {
+    width: 1000,
+    height: 2000,
+    pockets: [],
+    cushions: [],
+  };
   /** Top numarası → diffuse (1–15, 0 = isteka); paylaşılan `Texture` referansı. */
   private readonly ballDiffuseByNumber = new Map<number, THREE.Texture>();
+  /** Optional authored ball mesh template (`Ball.glb`); null => procedural sphere fallback. */
+  private ballMeshTemplate: THREE.Object3D | null = null;
+  private ballMeshLoadAttempted = false;
   private readonly assetBaseUrl: string;
   /** Global phase for tutorial rim pulse (seconds). */
   private tutorialGlowPhase = 0;
@@ -147,7 +162,7 @@ export class ThreeSceneAdapter {
     options?: ThreeSceneAdapterOptions,
   ) {
     this.assetBaseUrl = options?.assetBaseUrl ?? '/';
-    this.physicsTable = options?.physicsTable ?? new Table();
+    if (options?.tableGeometry) this.tableGeometry = options.tableGeometry;
 
     this.scene.background = new THREE.Color(0x0b0f14);
     this.camera = new THREE.PerspectiveCamera(24, 1, 40, 12000);
@@ -175,10 +190,22 @@ export class ThreeSceneAdapter {
 
   /** Preload declared templates/models (guide §6). */
   async preload(templateIds: readonly string[]): Promise<void> {
-    void templateIds;
+    const preloadIds = new Set<string>(templateIds);
+    preloadIds.add(AssetIds.cueMesh);
+    preloadIds.add(AssetIds.ballMesh);
+    preloadIds.add(AssetIds.tableFloorTex);
+    preloadIds.add(AssetIds.aimIntroFinger);
+    preloadIds.add(AssetIds.ballInHandFinger);
     await this.loadBallDiffuseTextures();
-    await this.loadCueHandHintTexture();
-    await this.loadFloorUnderTable();
+    if (preloadIds.has(AssetIds.ballMesh)) {
+      await this.loadBallMeshFromManifest();
+    }
+    if (preloadIds.has(AssetIds.aimIntroFinger) || preloadIds.has(AssetIds.ballInHandFinger)) {
+      await this.loadCueHandHintTexture();
+    }
+    if (preloadIds.has(AssetIds.tableFloorTex)) {
+      await this.loadFloorUnderTable();
+    }
     await this.loadImportedCueStickFromManifest();
   }
 
@@ -235,6 +262,15 @@ export class ThreeSceneAdapter {
       this.cueGroup.remove(this.cueMeshRoot);
       this.cueMeshRoot = null;
     }
+    if (this.ballMeshTemplate) {
+      this.ballMeshTemplate.traverse((o) => {
+        if (!(o instanceof THREE.Mesh)) return;
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        for (const m of mats) m.dispose?.();
+        o.geometry?.dispose();
+      });
+      this.ballMeshTemplate = null;
+    }
     for (const t of this.cueAlbedoBySlot.values()) {
       t.dispose();
     }
@@ -247,10 +283,18 @@ export class ThreeSceneAdapter {
     return resolveBrowserAssetUrl(this.assetBaseUrl, browserUrl);
   }
 
+  private resolveAssetUrlById(assetId: string): string {
+    const entry = AssetManifest[assetId as keyof typeof AssetManifest];
+    if (!entry) {
+      throw new Error(`[ThreeSceneAdapter] Missing asset id in manifest: ${assetId}`);
+    }
+    return this.resolveAssetUrl(entry.browserUrl);
+  }
+
   /** `public/textures/floor/floor.jpg` — masanın altında geniş zemin. */
   private async loadFloorUnderTable(): Promise<void> {
     if (this.floorMesh) return;
-    const url = this.resolveAssetUrl('textures/floor/floor.jpg');
+    const url = this.resolveAssetUrlById(AssetIds.tableFloorTex);
     const loader = new THREE.TextureLoader();
     let tex: THREE.Texture;
     try {
@@ -268,7 +312,7 @@ export class ThreeSceneAdapter {
     tex.magFilter = THREE.LinearFilter;
     this.floorTexture = tex;
 
-    const t = this.physicsTable;
+    const t = this.tableGeometry;
     const span = Math.max(t.width, t.height) * FLOOR_EXTEND_MUL;
     const geom = new THREE.PlaneGeometry(span, span);
     const mat = new THREE.MeshStandardMaterial({
@@ -322,21 +366,90 @@ export class ThreeSceneAdapter {
 
   private async loadCueHandHintTexture(): Promise<void> {
     if (this.cueHandHintTexture) return;
-    const href = new URL('../ui/hand-cursor-tap.png', import.meta.url).href;
     const loader = new THREE.TextureLoader();
+    const urls = [this.resolveAssetUrlById(AssetIds.aimIntroFinger), handCursorTapPngUrl];
+    for (const href of urls) {
+      try {
+        const tex = await loader.loadAsync(href);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.minFilter = THREE.LinearFilter;
+        tex.magFilter = THREE.LinearFilter;
+        tex.wrapS = THREE.ClampToEdgeWrapping;
+        tex.wrapT = THREE.ClampToEdgeWrapping;
+        tex.generateMipmaps = false;
+        this.cueHandHintTexture = tex;
+        this.attachCueHandHintSprite();
+        this.attachBallInHandHandHintSprite();
+        return;
+      } catch {
+        // try next candidate
+      }
+    }
+  }
+
+  private async loadAimIntroFingerTexture(): Promise<THREE.Texture | null> {
+    const loader = new THREE.TextureLoader();
+    const urls = [this.resolveAssetUrlById(AssetIds.aimIntroFinger), handCursorTapPngUrl];
+    for (const href of urls) {
+      try {
+        const tex = await loader.loadAsync(href);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.minFilter = THREE.LinearFilter;
+        tex.magFilter = THREE.LinearFilter;
+        tex.wrapS = THREE.ClampToEdgeWrapping;
+        tex.wrapT = THREE.ClampToEdgeWrapping;
+        tex.generateMipmaps = false;
+        return tex;
+      } catch {
+        // try next candidate
+      }
+    }
+    return null;
+  }
+
+  private async ensureAimIntroFingerSprite(container: THREE.Group): Promise<void> {
+    if (container.userData.aimIntroReady === true) return;
+    if (container.userData.aimIntroLoading === true) return;
+    container.userData.aimIntroLoading = true;
     try {
-      const tex = await loader.loadAsync(href);
-      tex.colorSpace = THREE.SRGBColorSpace;
-      tex.minFilter = THREE.LinearFilter;
-      tex.magFilter = THREE.LinearFilter;
-      tex.wrapS = THREE.ClampToEdgeWrapping;
-      tex.wrapT = THREE.ClampToEdgeWrapping;
-      tex.generateMipmaps = false;
-      this.cueHandHintTexture = tex;
-      this.attachCueHandHintSprite();
-      this.attachBallInHandHandHintSprite();
+      const tex = await this.loadAimIntroFingerTexture();
+      if (!tex) return;
+      const mat = new THREE.SpriteMaterial({
+        map: tex,
+        transparent: true,
+        depthTest: true,
+        depthWrite: false,
+        alphaTest: 0.02,
+      });
+      const sprite = new THREE.Sprite(mat);
+      sprite.name = 'aimIntroFinger';
+      sprite.renderOrder = 62;
+      sprite.scale.set(52, 52, 1);
+      sprite.center.set(0.42, 0.7);
+      container.add(sprite);
+      container.userData.aimIntroReady = true;
+    } finally {
+      container.userData.aimIntroLoading = false;
+    }
+  }
+
+  private async loadBallMeshFromManifest(): Promise<void> {
+    if (this.ballMeshTemplate || this.ballMeshLoadAttempted) return;
+    this.ballMeshLoadAttempted = true;
+    const entry = AssetManifest[AssetIds.ballMesh as keyof typeof AssetManifest];
+    if (!entry || entry.kind !== 'model') return;
+    const loader = new GLTFLoader();
+    try {
+      const gltf = await loader.loadAsync(this.resolveAssetUrl(entry.browserUrl));
+      this.ballMeshTemplate = gltf.scene;
+      this.ballMeshTemplate.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) {
+          obj.castShadow = true;
+          obj.receiveShadow = true;
+        }
+      });
     } catch {
-      /* asset optional */
+      // Optional asset; procedural sphere path remains active.
     }
   }
 
@@ -381,40 +494,6 @@ export class ThreeSceneAdapter {
   }
 
   /** Demo “finger” on felt during first-break aim intro (`AssetIds.aimIntroFinger`). */
-  private async ensureAimIntroFingerSprite(container: THREE.Group): Promise<void> {
-    if (container.userData.aimIntroReady === true) return;
-    if (container.userData.aimIntroLoading === true) return;
-    container.userData.aimIntroLoading = true;
-    const href = new URL('../ui/hand-cursor-tap.png', import.meta.url).href;
-    const loader = new THREE.TextureLoader();
-    try {
-      const tex = await loader.loadAsync(href);
-      tex.colorSpace = THREE.SRGBColorSpace;
-      tex.minFilter = THREE.LinearFilter;
-      tex.magFilter = THREE.LinearFilter;
-      tex.wrapS = THREE.ClampToEdgeWrapping;
-      tex.wrapT = THREE.ClampToEdgeWrapping;
-      tex.generateMipmaps = false;
-      const mat = new THREE.SpriteMaterial({
-        map: tex,
-        transparent: true,
-        depthTest: true,
-        depthWrite: false,
-        alphaTest: 0.02,
-      });
-      const sprite = new THREE.Sprite(mat);
-      sprite.name = 'aimIntroFinger';
-      sprite.renderOrder = 62;
-      sprite.scale.set(52, 52, 1);
-      sprite.center.set(0.42, 0.7);
-      container.add(sprite);
-      container.userData.aimIntroReady = true;
-    } catch {
-      /* optional */
-    } finally {
-      container.userData.aimIntroLoading = false;
-    }
-  }
 
   private async loadBallDiffuseTextures(): Promise<void> {
     for (const t of this.ballDiffuseByNumber.values()) {
@@ -462,6 +541,7 @@ export class ThreeSceneAdapter {
 
   render(state: RenderWorldState, dtSec: number, hints: RenderRuntimeHints): void {
     const dt = Math.max(0, Math.min(0.08, dtSec));
+    if (state.tableGeometry) this.tableGeometry = state.tableGeometry;
     if (state.ambientColorHex) {
       this.scene.background = new THREE.Color(state.ambientColorHex);
     }
@@ -519,7 +599,7 @@ export class ThreeSceneAdapter {
     }
     this.ballInHandHintPhase += dtSec * 5.2;
     const bob = Math.sin(this.ballInHandHintPhase) * 7;
-    const w = this.physicsTable.width;
+    const w = this.tableGeometry.width;
     /** +X ≈ sağ; negatif Y ofseti = ikon biraz daha aşağı. */
     sprite.position.set(bx + w * 0.036, by + w * -0.008 + bob, bz);
   }
@@ -584,26 +664,30 @@ export class ThreeSceneAdapter {
         }
       }
       if (!obj) continue;
-      if (o.objectId.startsWith('ball.') && (obj as THREE.Object3D).type === 'Mesh') {
-        const mesh = obj as THREE.Mesh;
+      if (o.lifetime === 'pooled') this.pooledObjectIds.add(o.objectId);
+      else this.pooledObjectIds.delete(o.objectId);
+      if (o.objectId.startsWith('ball.')) {
+        const ballObj = obj as THREE.Object3D;
         if (this.ballDropAnim.has(o.objectId)) {
           continue;
         }
-        const wasVisible = mesh.visible;
+        const wasVisible = ballObj.visible;
         if (wasVisible && !o.visible && this.ballLastPos.has(o.objectId)) {
-          this.startBallDropAnim(o.objectId, mesh);
+          this.startBallDropAnim(o.objectId, ballObj);
           continue;
         }
         if (o.visible) {
           this.ballDropAnim.delete(o.objectId);
-          mesh.visible = true;
-          this.applyTransform(mesh, o);
-          this.applyBallRollVisual(mesh, o, dtSec);
-          this.syncTutorialBallGlow(mesh, o.tags);
+          ballObj.visible = true;
+          this.applyTransform(ballObj, o);
+          this.applyBallRollVisual(ballObj, o, dtSec);
+          const glowMesh = this.resolveBallGlowMesh(ballObj);
+          if (glowMesh) this.syncTutorialBallGlow(glowMesh, o.tags);
         } else {
-          mesh.visible = false;
-          this.applyTransform(mesh, o);
-          this.syncTutorialBallGlow(mesh, undefined);
+          ballObj.visible = false;
+          this.applyTransform(ballObj, o);
+          const glowMesh = this.resolveBallGlowMesh(ballObj);
+          if (glowMesh) this.syncTutorialBallGlow(glowMesh, undefined);
         }
         continue;
       }
@@ -612,6 +696,10 @@ export class ThreeSceneAdapter {
     }
     for (const [id, obj] of this.objectById) {
       if (!seen.has(id)) {
+        if (this.pooledObjectIds.has(id)) {
+          obj.visible = false;
+          continue;
+        }
         this.ballRollQuat.delete(id);
         this.ballLastPos.delete(id);
         this.ballDropAnim.delete(id);
@@ -622,17 +710,17 @@ export class ThreeSceneAdapter {
     }
   }
 
-  private startBallDropAnim(id: string, mesh: THREE.Mesh): void {
-    const tw = this.physicsTable.width;
-    const th = this.physicsTable.height;
-    const mx = mesh.position.x;
-    const mz = mesh.position.z;
+  private startBallDropAnim(id: string, obj: THREE.Object3D): void {
+    const tw = this.tableGeometry.width;
+    const th = this.tableGeometry.height;
+    const mx = obj.position.x;
+    const mz = obj.position.z;
     let bestD = Infinity;
     let toX = mx;
     let toZ = mz;
-    for (const p of this.physicsTable.pockets) {
-      const px = p.pos.x - tw / 2;
-      const pz = p.pos.y - th / 2;
+    for (const p of this.tableGeometry.pockets) {
+      const px = p.x - tw / 2;
+      const pz = p.y - th / 2;
       const d = (px - mx) ** 2 + (pz - mz) ** 2;
       if (d < bestD) {
         bestD = d;
@@ -646,17 +734,17 @@ export class ThreeSceneAdapter {
       fromZ: mz,
       toX,
       toZ,
-      baseY: mesh.position.y,
-      scaleBase: mesh.scale.x,
+      baseY: obj.position.y,
+      scaleBase: obj.scale.x,
     });
-    mesh.visible = true;
+    obj.visible = true;
   }
 
   private tickBallDropAnim(dt: number): void {
     const finished: string[] = [];
     for (const [id, st] of this.ballDropAnim) {
-      const mesh = this.objectById.get(id) as THREE.Mesh | undefined;
-      if (!mesh || mesh.type !== 'Mesh') {
+      const obj = this.objectById.get(id);
+      if (!obj) {
         finished.push(id);
         continue;
       }
@@ -673,12 +761,12 @@ export class ThreeSceneAdapter {
         cy = st.baseY - POCKET_DROP_DEPTH_R * st.scaleBase * drop;
         s = st.scaleBase * (1 - dropU * 0.85);
       }
-      mesh.position.set(cx, cy, cz);
-      mesh.scale.setScalar(Math.max(1e-4, s));
-      mesh.visible = true;
+      obj.position.set(cx, cy, cz);
+      obj.scale.setScalar(Math.max(1e-4, s));
+      obj.visible = true;
       if (st.t >= POCKET_SLIDE_SEC + POCKET_DROP_SEC) {
-        mesh.visible = false;
-        mesh.scale.setScalar(st.scaleBase);
+        obj.visible = false;
+        obj.scale.setScalar(st.scaleBase);
         finished.push(id);
       }
     }
@@ -688,7 +776,7 @@ export class ThreeSceneAdapter {
   }
 
   /** ω ∝ ŷ × v on table plane; uses real render dt so spin is visible. */
-  private applyBallRollVisual(mesh: THREE.Mesh, o: WorldObjectState, dtSec: number): void {
+  private applyBallRollVisual(obj: THREE.Object3D, o: WorldObjectState, dtSec: number): void {
     const id = o.objectId;
     const p = o.transform.position;
     const py = p.y + TABLE_SCENE_Y_LIFT + PLAYFIELD_RENDER_Y_OFFSET;
@@ -729,7 +817,17 @@ export class ThreeSceneAdapter {
       this.tmpRollDelta.setFromAxisAngle(this.tmpRollAxis, angle);
       rq.premultiply(this.tmpRollDelta);
     }
-    mesh.quaternion.copy(rq);
+    obj.quaternion.copy(rq);
+  }
+
+  private resolveBallGlowMesh(obj: THREE.Object3D): THREE.Mesh | null {
+    if (obj instanceof THREE.Mesh) return obj;
+    let firstMesh: THREE.Mesh | null = null;
+    obj.traverse((child) => {
+      if (firstMesh || !(child instanceof THREE.Mesh)) return;
+      firstMesh = child;
+    });
+    return firstMesh;
   }
 
   private createWorldObject(o: WorldObjectState): THREE.Object3D | null {
@@ -740,7 +838,7 @@ export class ThreeSceneAdapter {
     if (o.templateId === AssetIds.opponentTungPlaceholder) {
       const root = new THREE.Group();
       this.loadTungBackdropBrickWall(root);
-      this.loadOpponentIdleFbx(root, 'opponents/tungo/model/Tungo_Idle.fbx', 'Tungo_Idle.fbx', 1);
+      this.loadOpponentIdleFbx(root, AssetIds.opponentTungoIdleModel, 'Tungo_Idle.fbx', 1);
       return root;
     }
     if (o.templateId === AssetIds.opponentGattottoPlaceholder) {
@@ -748,7 +846,7 @@ export class ThreeSceneAdapter {
       this.loadTungBackdropBrickWall(root);
       this.loadOpponentIdleFbx(
         root,
-        'opponents/gattotto_otto/model/Idle.fbx',
+        AssetIds.opponentGattottoIdleModel,
         'Idle.fbx',
         0.75,
       );
@@ -759,7 +857,7 @@ export class ThreeSceneAdapter {
       this.loadTungBackdropBrickWall(root);
       this.loadOpponentIdleFbx(
         root,
-        'opponents/torta_tartaruga/model/Torta_Idle.fbx',
+        AssetIds.opponentTortaIdleModel,
         'Torta_Idle.fbx',
         0.9375,
       );
@@ -772,14 +870,38 @@ export class ThreeSceneAdapter {
     }
     const ball = parseBallTemplate(o.templateId);
     if (ball) {
-      const diffuse = this.ballDiffuseByNumber.get(ball.num);
-      const mat = makeBallMaterial(ball.kind, ball.num, diffuse);
+      return this.createBallObject(ball.kind, ball.num);
+    }
+    return null;
+  }
+
+  private createBallObject(kind: BallKind, num: number): THREE.Object3D {
+    const diffuse = this.ballDiffuseByNumber.get(num);
+    if (!this.ballMeshTemplate) {
+      const mat = makeBallMaterial(kind, num, diffuse);
       const mesh = new THREE.Mesh(this.ballGeo, mat);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       return mesh;
     }
-    return null;
+
+    const root = this.ballMeshTemplate.clone(true);
+    const meshes: THREE.Mesh[] = [];
+    root.traverse((obj) => {
+      if (!(obj instanceof THREE.Mesh)) return;
+      obj.castShadow = true;
+      obj.receiveShadow = true;
+      obj.geometry = obj.geometry.clone();
+      meshes.push(obj);
+    });
+
+    const target = largestMeshByBoundingVolume(meshes);
+    if (target) {
+      const mats = Array.isArray(target.material) ? target.material : [target.material];
+      for (const m of mats) m.dispose?.();
+      target.material = makeBallMaterial(kind, num, diffuse);
+    }
+    return root;
   }
 
   /**
@@ -889,7 +1011,7 @@ export class ThreeSceneAdapter {
   private loadTungBackdropBrickWall(container: THREE.Group): void {
     if (container.userData.tungWallState === 'loading' || container.userData.tungWallState === 'done') return;
     container.userData.tungWallState = 'loading';
-    const url = this.resolveAssetUrl('textures/wall/cartoon-brick.png');
+    const url = this.resolveAssetUrlById(AssetIds.tungBackdropWallTex);
     const loader = new THREE.TextureLoader();
     void loader
       .loadAsync(url)
@@ -907,8 +1029,8 @@ export class ThreeSceneAdapter {
         tex.magFilter = THREE.LinearFilter;
         tex.generateMipmaps = true;
 
-        const wallH = OPPONENT_TUNG_MODEL_TARGET_HEIGHT * TUNG_BACK_WALL_HEIGHT_MODEL_MUL;
-        const wallW = this.physicsTable.width * TUNG_BACK_WALL_WIDTH_TABLE_MUL;
+        const wallH = OPPONENT_MODEL_TARGET_HEIGHT * TUNG_BACK_WALL_HEIGHT_MODEL_MUL;
+        const wallW = this.tableGeometry.width * TUNG_BACK_WALL_WIDTH_TABLE_MUL;
         const geom = new THREE.PlaneGeometry(wallW, wallH);
         const mat = new THREE.MeshStandardMaterial({
           map: tex,
@@ -989,8 +1111,8 @@ export class ThreeSceneAdapter {
 
   /**
    * Many FBX exports (Meshy, Blender) store **absolute disk paths** to textures — browsers never resolve those,
-   * so materials render black. If you copy `temp.fbm/Image_0.jpg` (+ `_2`, `_3`) next to the FBX under
-   * `public/.../model/temp.fbm/`, we bind them here (same convention as typical Meshy `_texture_fbx` packs).
+   * so materials render black. If sidecar files are copied next to the FBX under `public/.../model/temp.fbm/`,
+   * we bind them using manifest-declared filenames (same convention as Meshy `_texture_fbx` packs).
    */
   private bindIdleFbmTexturesFromPublicFolder(
     root: THREE.Object3D,
@@ -998,6 +1120,17 @@ export class ThreeSceneAdapter {
     opts: { hintLabel?: string },
   ): void {
     const dir = fbxUrl.slice(0, fbxUrl.lastIndexOf('/') + 1);
+    const sidecarNames = {
+      diffuse:
+        AssetManifest[AssetIds.opponentIdleSidecarDiffuse as keyof typeof AssetManifest]?.browserUrl ??
+        'missing.diffuse',
+      normal:
+        AssetManifest[AssetIds.opponentIdleSidecarNormal as keyof typeof AssetManifest]?.browserUrl ??
+        'missing.normal',
+      emissive:
+        AssetManifest[AssetIds.opponentIdleSidecarEmissive as keyof typeof AssetManifest]?.browserUrl ??
+        'missing.emissive',
+    };
     const candidates = (file: string): string[] => [`${dir}temp.fbm/${file}`, `${dir}${file}`];
 
     const tl = new THREE.TextureLoader();
@@ -1013,9 +1146,9 @@ export class ThreeSceneAdapter {
     };
 
     void Promise.all([
-      loadFirst('Image_0.jpg'),
-      loadFirst('Image_2.jpg'),
-      loadFirst('Image_3.jpg'),
+      loadFirst(sidecarNames.diffuse),
+      loadFirst(sidecarNames.normal),
+      loadFirst(sidecarNames.emissive),
     ]).then(([diffuse, normalMap, emissiveMap]) => {
       let any = false;
       root.traverse((obj) => {
@@ -1065,26 +1198,18 @@ export class ThreeSceneAdapter {
         fbxUrl.includes('gattotto_otto')
       ) {
         console.warn(
-          '[ThreeSceneAdapter] FBX textures point at local disk paths — copy Meshy `temp.fbm/Image_0.jpg`, `Image_2.jpg`, `Image_3.jpg` into public folder:',
+          `[ThreeSceneAdapter] FBX textures point at local disk paths — copy sidecar textures (${sidecarNames.diffuse}, ${sidecarNames.normal}, ${sidecarNames.emissive}) into:`,
           `${dir}temp.fbm/`,
         );
       }
     });
   }
 
-  /**
-   * Idle opponent mesh behind the rail — same scale/pivot as Tungo (`OPPONENT_TUNG_MODEL_TARGET_HEIGHT`).
-   * @param relativePath e.g. `opponents/torta_tartaruga/model/Torta_Idle.fbx`
-   */
-  private loadOpponentIdleFbx(
-    container: THREE.Group,
-    relativePath: string,
-    logLabel: string,
-    scaleMul = 1,
-  ): void {
+  /** Idle opponent mesh behind the rail with shared target-height normalization. */
+  private loadOpponentIdleFbx(container: THREE.Group, modelAssetId: string, logLabel: string, scaleMul = 1): void {
     if (container.userData.tungLoadState === 'loading' || container.userData.tungLoadState === 'done') return;
     container.userData.tungLoadState = 'loading';
-    const href = resolveBrowserAssetUrl(this.assetBaseUrl, relativePath);
+    const href = this.resolveAssetUrlById(modelAssetId);
     const loader = new FBXLoader();
     loader.load(
       href,
@@ -1099,7 +1224,7 @@ export class ThreeSceneAdapter {
         fbx.updateMatrixWorld(true);
         const box0 = new THREE.Box3().setFromObject(fbx);
         const size = box0.getSize(new THREE.Vector3());
-        const sy = (OPPONENT_TUNG_MODEL_TARGET_HEIGHT / Math.max(size.y, 1e-4)) * scaleMul;
+        const sy = (OPPONENT_MODEL_TARGET_HEIGHT / Math.max(size.y, 1e-4)) * scaleMul;
         fbx.scale.setScalar(sy);
         fbx.updateMatrixWorld(true);
         let box2 = new THREE.Box3().setFromObject(fbx);
@@ -1134,6 +1259,8 @@ export class ThreeSceneAdapter {
     for (const line of lines) {
       if (line.points.length < 2) continue;
       seen.add(line.objectId);
+      if (line.lifetime === 'pooled') this.pooledPolylineIds.add(line.objectId);
+      else this.pooledPolylineIds.delete(line.objectId);
       let ln = this.polylineById.get(line.objectId);
       if (!ln) {
         ln = this.makePolyline(line);
@@ -1169,6 +1296,10 @@ export class ThreeSceneAdapter {
     }
     for (const [id, ln] of this.polylineById) {
       if (!seen.has(id)) {
+        if (this.pooledPolylineIds.has(id)) {
+          ln.visible = false;
+          continue;
+        }
         this.scene.remove(ln);
         ln.geometry.dispose();
         (ln.material as THREE.Material).dispose();
@@ -1191,7 +1322,7 @@ export class ThreeSceneAdapter {
   }
 
   private buildLights(): void {
-    const t = this.physicsTable;
+    const t = this.tableGeometry;
     const span = Math.max(t.width, t.height) * 0.42 + 48;
     const amb = new THREE.AmbientLight(0xffffff, 0.22);
     this.scene.add(amb);
@@ -1246,7 +1377,7 @@ export class ThreeSceneAdapter {
   }
 
   private addTableLoadingBackdrop(): void {
-    const t = this.physicsTable;
+    const t = this.tableGeometry;
     const plane = new THREE.Mesh(
       new THREE.PlaneGeometry(t.width, t.height),
       new THREE.MeshBasicMaterial({ color: 0x0a1812 }),
@@ -1258,7 +1389,7 @@ export class ThreeSceneAdapter {
   }
 
   private fitTableModelToPhysics(model: THREE.Object3D): void {
-    const t = this.physicsTable;
+    const t = this.tableGeometry;
     const tw = t.width;
     const th = t.height;
     const root = new THREE.Group();
@@ -1290,7 +1421,7 @@ export class ThreeSceneAdapter {
   }
 
   private buildProceduralTable(): void {
-    const t = this.physicsTable;
+    const t = this.tableGeometry;
     const tw = t.width;
     const th = t.height;
     const feltTex = createFeltTexture();
@@ -1359,8 +1490,8 @@ export class ThreeSceneAdapter {
       metalness: 0.12,
     });
     for (const p of t.pockets) {
-      const px = p.pos.x - tw / 2;
-      const pz = p.pos.y - th / 2;
+      const px = p.x - tw / 2;
+      const pz = p.y - th / 2;
       const pr = p.radius;
       const ring = new THREE.Mesh(new THREE.TorusGeometry(pr * 0.96, 1.6, 10, 40), ringMat);
       ring.rotation.x = Math.PI / 2;
@@ -1762,6 +1893,21 @@ function parseBallTemplate(templateId: string): { kind: BallKind; num: number } 
   return null;
 }
 
+function largestMeshByBoundingVolume(meshes: readonly THREE.Mesh[]): THREE.Mesh | null {
+  let biggestMesh: THREE.Mesh | null = null;
+  let biggestVolume = -1;
+  for (const mesh of meshes) {
+    const box = new THREE.Box3().setFromObject(mesh);
+    const size = box.getSize(new THREE.Vector3());
+    const volume = size.x * size.y * size.z;
+    if (volume > biggestVolume) {
+      biggestVolume = volume;
+      biggestMesh = mesh;
+    }
+  }
+  return biggestMesh;
+}
+
 /** Object-space tint so ball rotation is visible (solids/cue/8 were visually symmetric). */
 function patchBallRollShader(shader: { vertexShader: string; fragmentShader: string }): void {
   if (shader.vertexShader.includes('vRollObjPos')) return;
@@ -1782,6 +1928,10 @@ varying vec3 vRollObjPos;`,
   );
 }
 
+/**
+ * Browser-only shader hook for subtle rolling readability.
+ * MHS parity note: replicate with a material graph node (object-space sinusoidal tint) or keep it disabled.
+ */
 const ROLL_VISUAL_MOD = `diffuseColor.rgb *= 1.0 + 0.14 * sin( dot( vRollObjPos, vec3( 0.94, 1.09, 1.05 ) ) * 0.2 );`;
 
 function appendRollToColorFragment(shader: { fragmentShader: string }): void {
@@ -1883,6 +2033,7 @@ function makeStripeBallMaterial(num: number): THREE.MeshStandardMaterial {
     roughness: 0.4,
     metalness: 0.08,
   });
+  // MHS parity note: stripe cap blend should map to a layer mask/material blend in Studio.
   mat.onBeforeCompile = (shader) => {
     patchBallRollShader(shader);
     shader.fragmentShader = shader.fragmentShader.replace(

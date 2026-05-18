@@ -9,6 +9,35 @@ export type GamePhase =
 
 export type PlayerId = 'player' | 'ai';
 
+/**
+ * Authoritative gameplay state boundary for portability.
+ * Rendering/UI adapters should consume projections derived from this state.
+ */
+export interface GameState {
+  phase: GamePhase;
+  levelIndex: number;
+  activePlayer: PlayerId;
+  spin: { x: number; y: number };
+  rules: {
+    openTable: boolean;
+    playerGroup: 'solid' | 'stripe' | null;
+    aiGroup: 'solid' | 'stripe' | null;
+  };
+  tutorial: {
+    active: boolean;
+    aimIntroActive: boolean;
+    eightBallIntroActive: boolean;
+    awaitingBallInHandPlacement: boolean;
+  };
+  tournament: null | {
+    active: boolean;
+    currentRound: number;
+    size: number;
+    status: 'active' | 'won' | 'lost';
+    defId: string;
+  };
+}
+
 export interface GameSnapshot {
   phase: GamePhase;
   levelIndex: number;

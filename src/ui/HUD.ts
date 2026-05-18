@@ -12,8 +12,12 @@ import type { StorageAdapter } from '../core/StorageAdapter.js';
 import { evaluateAchievements } from './AchievementsCatalog.js';
 import { getLeaderboard } from './LeaderboardData.js';
 
-const SOUND_ICON_ON_URL = new URL('./sound.png', import.meta.url).href;
-const SOUND_ICON_OFF_URL = new URL('./sound_off.png', import.meta.url).href;
+function manifestUrl(assetBaseUrl: string, id: string): string {
+  const entry = AssetManifest[id as keyof typeof AssetManifest];
+  if (!entry) throw new Error(`[HUD] Missing asset manifest id: ${id}`);
+  return resolveBrowserAssetUrl(assetBaseUrl, entry.browserUrl);
+}
+
 function opponentHudAvatarUrl(assetBaseUrl: string, opponentId: string): string {
   if (opponentId === 'tungo') {
     const e = AssetManifest['ui.opponent.tungo.avatar'];
@@ -174,6 +178,7 @@ export class HUD {
   private readonly hudNotice: HTMLElement;
   private readonly hudNoticeText: HTMLElement;
   private readonly ballInHandHintLabel: HTMLElement;
+  private readonly ballInHandConfirmBtn: HTMLButtonElement;
   private hudNoticeTimer: ReturnType<typeof setTimeout> | null = null;
   private lastHudNoticeBeatId = -1;
   /** `${defId}:${currentRound}` of the most recently introduced match — prevents re-triggering. */
@@ -239,7 +244,7 @@ export class HUD {
       storage?: StorageAdapter;
     },
   ) {
-    this.coinIconUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/money.png');
+    this.coinIconUrl = manifestUrl(this.assetBaseUrl, AssetIds.uiMoney);
     this.root = root;
     this.storage = opts?.storage ?? null;
     this.gameRoot = root.parentElement?.id === 'game-root' ? root.parentElement : null;
@@ -320,7 +325,7 @@ export class HUD {
                   </div>
                 </div>
               </div>
-              <img class="hud-vs-flare" src="${new URL('./vs.png', import.meta.url).href}" alt="" decoding="async" draggable="false" />
+              <img class="hud-vs-flare" src="${manifestUrl(this.assetBaseUrl, AssetIds.uiVsFlare)}" alt="" decoding="async" draggable="false" />
               <div class="hud-duel-side hud-duel-side--pl">
                 <div class="hud-duel-pl-anchor">
                   <div class="avatar-frame interactive" id="pl-avatar-frame" aria-hidden="true">
@@ -397,12 +402,12 @@ export class HUD {
     this.bubble = el('div', 'bubble');
     this.bubble.innerHTML = `<div id="bubble-text" class="bubble-text"></div>`;
 
-    this.urlChampionRibbonMatch = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/champion_match.png');
-    this.urlChampionRibbonTournament = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/champion_tournament.png');
+    this.urlChampionRibbonMatch = manifestUrl(this.assetBaseUrl, AssetIds.uiChampionRibbonMatch);
+    this.urlChampionRibbonTournament = manifestUrl(this.assetBaseUrl, AssetIds.uiChampionRibbonTournament);
     this.end = el('div', 'panel end interactive');
-    const endPlayCtaUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/Button_Play_new.png');
-    const endPlayAgainUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/play_again.png');
-    this.urlEndNextGame = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/next-game.png');
+    const endPlayCtaUrl = manifestUrl(this.assetBaseUrl, AssetIds.uiPlayCta);
+    const endPlayAgainUrl = manifestUrl(this.assetBaseUrl, AssetIds.uiPlayAgain);
+    this.urlEndNextGame = manifestUrl(this.assetBaseUrl, AssetIds.uiNextGame);
     this.end.innerHTML = `
       <div class="end-result-hero" aria-hidden="false">
         <div id="end-title-wrap" class="end-title-wrap">
@@ -478,7 +483,7 @@ export class HUD {
         </div>
         <div class="end-actions">
           <button id="btn-shop" class="btn ghost btn-icon-only end-icon-btn end-icon-btn--shop" aria-label="Open shop" title="Shop">
-            <img class="btn-icon" src="${resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/button_shop.png')}" alt="" decoding="async" draggable="false" />
+            <img class="btn-icon" src="${manifestUrl(this.assetBaseUrl, AssetIds.uiButtonShop)}" alt="" decoding="async" draggable="false" />
           </button>
           <div class="end-actions-mid">
             <button id="btn-play-again" type="button" class="end-play-again-btn interactive" aria-label="Play Again" title="Play Again">
@@ -493,10 +498,10 @@ export class HUD {
           </div>
           <div class="end-actions-main">
             <button id="btn-rematch" class="btn ghost btn-icon-only end-icon-btn end-icon-btn--home" aria-label="Back to main menu" title="Back to Main Menu">
-              <img class="btn-icon" src="${resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/button_mainmenu.png')}" alt="" decoding="async" draggable="false" />
+              <img class="btn-icon" src="${manifestUrl(this.assetBaseUrl, AssetIds.uiButtonMainMenu)}" alt="" decoding="async" draggable="false" />
             </button>
             <button id="btn-next" class="btn btn-next primary" aria-label="Next match" title="Next Match">
-              <img class="btn-next-home-icon" src="${resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/button_mainmenu.png')}" alt="" decoding="async" draggable="false" />
+              <img class="btn-next-home-icon" src="${manifestUrl(this.assetBaseUrl, AssetIds.uiButtonMainMenu)}" alt="" decoding="async" draggable="false" />
               <span class="btn-next-label">Next Match</span>
             </button>
           </div>
@@ -509,8 +514,8 @@ export class HUD {
     this.endBalance = this.end.querySelector('#end-balance') as HTMLElement;
     this.endTitleWrap = this.end.querySelector('#end-title-wrap') as HTMLElement;
     this.endTitleImg = this.end.querySelector('#end-title-img') as HTMLImageElement;
-    this.urlEndYouWon = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/youwon.png');
-    this.urlEndYouLose = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/youlose.png');
+    this.urlEndYouWon = manifestUrl(this.assetBaseUrl, AssetIds.uiYouWon);
+    this.urlEndYouLose = manifestUrl(this.assetBaseUrl, AssetIds.uiYouLose);
     this.endPlayerName = this.end.querySelector('#end-player-name') as HTMLElement;
     this.endPlayerNameText = this.end.querySelector('#end-player-name-text') as HTMLElement;
     this.endModeWinBadge = this.end.querySelector('#end-mode-win-badge') as HTMLImageElement;
@@ -577,7 +582,7 @@ export class HUD {
     this.endLevel = this.end.querySelector('#end-lvl') as HTMLElement;
 
     this.shopOverlay = el('div', 'hud-shop-overlay');
-    const shopBannerArt = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/shop_brainrot.png');
+    const shopBannerArt = manifestUrl(this.assetBaseUrl, AssetIds.uiShopBanner);
     this.shopOverlay.innerHTML = `
       <div class="hud-shop-backdrop" id="hud-shop-backdrop"></div>
       <div class="hud-shop-modal">
@@ -661,7 +666,7 @@ export class HUD {
     this.modeSelectTitleEl = this.modeSelectOverlay.querySelector('#modeselect-title') as HTMLElement;
 
     this.tournamentOverlay = el('div', 'hud-tournament-overlay');
-    const tournamentPlayIcon = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/button-start.png');
+    const tournamentPlayIcon = manifestUrl(this.assetBaseUrl, AssetIds.uiButtonStart);
     this.tournamentOverlay.innerHTML = `
       <div class="hud-tournament-overlay-bg" aria-hidden="true"></div>
       <div class="hud-tournament-overlay-fx" aria-hidden="true"></div>
@@ -711,7 +716,7 @@ export class HUD {
      * pure CSS (`?` glyph on a radial gradient) so no opponent image is
      * preloaded — guarantees the matchup stays a surprise until in-match.
      */
-    const casualStartPlate = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/button-start.png');
+    const casualStartPlate = manifestUrl(this.assetBaseUrl, AssetIds.uiButtonStart);
     this.casualOverlay = el('div', 'hud-casual-overlay');
     this.casualOverlay.setAttribute('role', 'dialog');
     this.casualOverlay.setAttribute('aria-modal', 'true');
@@ -856,6 +861,12 @@ export class HUD {
     this.ballInHandHintLabel = el('div', 'hud-ballinhand-hint');
     this.ballInHandHintLabel.textContent = 'Drag to Place';
     this.ballInHandHintLabel.setAttribute('aria-hidden', 'true');
+    this.ballInHandConfirmBtn = document.createElement('button');
+    this.ballInHandConfirmBtn.type = 'button';
+    this.ballInHandConfirmBtn.className = 'hud-ballinhand-confirm interactive';
+    this.ballInHandConfirmBtn.textContent = 'Confirm';
+    this.ballInHandConfirmBtn.setAttribute('aria-label', 'Confirm cue ball placement');
+    this.ballInHandConfirmBtn.setAttribute('aria-hidden', 'true');
 
     this.powerBarWrap = el('div', 'hud-power-bar interactive');
     this.powerBarWrap.setAttribute('aria-label', 'Shot power — drag cue down, release to shoot');
@@ -878,8 +889,8 @@ export class HUD {
       </div>
     `;
     this.powerBarTrack = this.powerBarWrap.querySelector('#hud-power-track') as HTMLElement;
-    const mutedTrack = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/power-meter/track-muted.png');
-    const spectrumTrack = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/power-meter/track-spectrum.png');
+    const mutedTrack = manifestUrl(this.assetBaseUrl, AssetIds.uiPowerTrackMuted);
+    const spectrumTrack = manifestUrl(this.assetBaseUrl, AssetIds.uiPowerTrackSpectrum);
     this.powerBarTrack.style.setProperty('--hud-power-muted-img', `url("${mutedTrack}")`);
     this.powerBarTrack.style.setProperty('--hud-power-spectrum-img', `url("${spectrumTrack}")`);
     this.powerBarWrap.style.display = 'none';
@@ -891,11 +902,11 @@ export class HUD {
     tutImg.className = 'hud-tutorial-power-drag-img';
     tutImg.alt = '';
     tutImg.decoding = 'async';
-    tutImg.src = new URL('./hand-cursor-tap-flipped.png', import.meta.url).href;
+    tutImg.src = manifestUrl(this.assetBaseUrl, AssetIds.tutorialDragFinger);
     tutImg.addEventListener(
       'error',
       () => {
-        tutImg.src = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/button_play.png');
+        tutImg.src = manifestUrl(this.assetBaseUrl, AssetIds.uiButtonPlayLegacy);
       },
       { once: true },
     );
@@ -903,26 +914,26 @@ export class HUD {
     powerInner.append(this.tutorialPowerDrag);
 
     /** Menu background — lounge art under the hub (`public/ui/bg.jpg`). */
-    const menuBgUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/bg.jpg');
+    const menuBgUrl = manifestUrl(this.assetBaseUrl, AssetIds.uiMenuBg);
     this.menu.style.setProperty('--menu-bg-image', `url("${menuBgUrl}")`);
 
     /** Hero logo — full "8 Balls Pool vs Brainrots" lockup over the menu hub. */
-    const menuLogoUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/8ballslogo.png');
+    const menuLogoUrl = manifestUrl(this.assetBaseUrl, AssetIds.uiMenuLogo);
     this.menu.style.setProperty('--menu-hero-logo-image', `url("${menuLogoUrl}")`);
 
     /** Secondary row — Leaderboard / Achievements (shop moved to main banner stack). */
-    const btnLeaderboardUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/button_leaderboards.png');
-    const btnAchievementsUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/button_achivement.png');
+    const btnLeaderboardUrl = manifestUrl(this.assetBaseUrl, AssetIds.uiButtonLeaderboards);
+    const btnAchievementsUrl = manifestUrl(this.assetBaseUrl, AssetIds.uiButtonAchievements);
     this.menu.style.setProperty('--menu-circle-leaderboard-image', `url("${btnLeaderboardUrl}")`);
     this.menu.style.setProperty('--menu-circle-achievements-image', `url("${btnAchievementsUrl}")`);
 
-    const btnPlayUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/Button_Play_new.png');
+    const btnPlayUrl = manifestUrl(this.assetBaseUrl, AssetIds.uiButtonPlayMain);
     this.menu.style.setProperty('--menu-play-image', `url("${btnPlayUrl}")`);
 
-    const btnTournamentsUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/Button_Tournaments_new.png');
+    const btnTournamentsUrl = manifestUrl(this.assetBaseUrl, AssetIds.uiButtonTournamentsMain);
     this.menu.style.setProperty('--menu-tournaments-image', `url("${btnTournamentsUrl}")`);
 
-    const btnShopMainUrl = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/Button_Shop_new.png');
+    const btnShopMainUrl = manifestUrl(this.assetBaseUrl, AssetIds.uiButtonShopMain);
     this.menu.style.setProperty('--menu-shop-main-image', `url("${btnShopMainUrl}")`);
 
     this.menu.style.setProperty('--menu-coin-icon-image', `url("${this.coinIconUrl}")`);
@@ -963,6 +974,7 @@ export class HUD {
       this.spinPopupOverlay,
       this.hudNotice,
       this.ballInHandHintLabel,
+      this.ballInHandConfirmBtn,
       this.nextModal,
       this.soundBtn,
       this.powerBarWrap,
@@ -988,6 +1000,10 @@ export class HUD {
       } else {
         this.pushCommand({ type: 'aimIntro.dismiss' });
       }
+    });
+    this.ballInHandConfirmBtn.addEventListener('click', () => {
+      this.playHudClickSound();
+      this.pushCommand({ type: 'ballInHand.confirm' });
     });
     this.btnNext.addEventListener('click', () => {
       this.playHudClickSound();
@@ -1792,8 +1808,12 @@ export class HUD {
       h.cueBallInHandCursorHint === true &&
       h.eightBall?.phase === 'PlayerTurn' &&
       h.eightBall?.activePlayer === 'player';
+    const showConfirm = show && h.cueBallInHandCanConfirm === true;
     this.ballInHandHintLabel.classList.toggle('show', show);
     this.ballInHandHintLabel.setAttribute('aria-hidden', show ? 'false' : 'true');
+    this.ballInHandConfirmBtn.classList.toggle('show', showConfirm);
+    this.ballInHandConfirmBtn.setAttribute('aria-hidden', showConfirm ? 'false' : 'true');
+    this.ballInHandConfirmBtn.disabled = !showConfirm;
   }
 
   private renderStatsModal(
@@ -2183,6 +2203,7 @@ export class HUD {
         /**
          * Suppress the click that browsers fire on pointerup after drag — it
          * would otherwise bubble to a card CTA and start a match accidentally.
+         * Presentation-only microtask guard; does not affect authoritative gameplay state.
          */
         this.modeSelectSuppressClick = true;
         setTimeout(() => {
@@ -2325,6 +2346,7 @@ export class HUD {
     this.matchIntro.classList.remove('show');
     void this.matchIntro.offsetWidth;
     this.matchIntro.classList.add('show');
+    /** Browser HUD presentation timer only; gameplay truth remains in GameEngine/HudState. */
     this.matchIntroTimer = setTimeout(() => {
       this.matchIntro.classList.remove('show');
       this.matchIntroTimer = null;
@@ -2367,6 +2389,7 @@ export class HUD {
     this.hudNotice.classList.remove('show');
     void this.hudNotice.offsetWidth;
     this.hudNotice.classList.add('show');
+    /** Browser HUD presentation timer only; does not drive game rules or simulation. */
     this.hudNoticeTimer = setTimeout(() => {
       this.hudNotice.classList.remove('show');
       this.hudNoticeTimer = null;
@@ -2619,8 +2642,8 @@ export class HUD {
     if (exitLabel) exitLabel.textContent = exitText;
     else this.tournamentExitBtn.textContent = exitText;
 
-    const urlTournamentUpNext = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/up-next.png');
-    const urlTournamentLocked = resolveBrowserAssetUrl(this.assetBaseUrl, 'ui/locked.png');
+    const urlTournamentUpNext = manifestUrl(this.assetBaseUrl, AssetIds.uiTournamentUpNext);
+    const urlTournamentLocked = manifestUrl(this.assetBaseUrl, AssetIds.uiTournamentLocked);
 
     this.tournamentSlots.innerHTML = t.opponents
       .map((opp, i) => {
@@ -2771,6 +2794,7 @@ export class HUD {
     if (this.confettiTimeout !== null) {
       window.clearTimeout(this.confettiTimeout);
     }
+    /** Browser-only visual timeout for confetti lifecycle; gameplay already resolved before this. */
     this.confettiTimeout = window.setTimeout(() => this.stopConfetti(), 3200);
   }
 
@@ -3122,6 +3146,9 @@ export class HUD {
     this.hideHudNotice();
     this.ballInHandHintLabel.classList.remove('show');
     this.ballInHandHintLabel.setAttribute('aria-hidden', 'true');
+    this.ballInHandConfirmBtn.classList.remove('show');
+    this.ballInHandConfirmBtn.setAttribute('aria-hidden', 'true');
+    this.ballInHandConfirmBtn.disabled = true;
     this.aimIntroOverlay.classList.remove('show');
     this.aimIntroOverlay.setAttribute('aria-hidden', 'true');
     this.hideNextMatchModal();
@@ -3130,7 +3157,9 @@ export class HUD {
   }
 
   private syncSoundButtonVisual(): void {
-    this.soundBtnIcon.src = this.soundMuted ? SOUND_ICON_OFF_URL : SOUND_ICON_ON_URL;
+    this.soundBtnIcon.src = this.soundMuted
+      ? manifestUrl(this.assetBaseUrl, AssetIds.uiSoundOff)
+      : manifestUrl(this.assetBaseUrl, AssetIds.uiSoundOn);
     this.soundBtn.setAttribute('aria-pressed', this.soundMuted ? 'true' : 'false');
     this.soundBtn.title = this.soundMuted ? 'Music off' : 'Music on';
   }
@@ -3182,29 +3211,29 @@ function stripOrdered(
 
 function potStripSlotHtml(n: number, assetBaseUrl: string, isPotted: boolean): string {
   if (isPotted) {
-    const emptySrc = resolveBrowserAssetUrl(assetBaseUrl, 'ui/no-ball.png');
+    const emptySrc = manifestUrl(assetBaseUrl, AssetIds.uiNoBall);
     return `<span class="pot-slot pot-slot--icon" aria-hidden="true"><img class="pot-slot-img" src="${emptySrc}" alt="" decoding="async" /></span>`;
   }
-  const ballSrc = resolveBrowserAssetUrl(assetBaseUrl, `ui/balls/${n}.png`);
+  const ballSrc = manifestUrl(assetBaseUrl, AssetIds.uiBallSprite(n));
   return `<span class="pot-slot pot-slot--icon" aria-hidden="true"><img class="pot-slot-img" src="${ballSrc}" alt="" decoding="async" /></span>`;
 }
 
 function stripUnknown(assetBaseUrl: string): string {
-  const emptySrc = resolveBrowserAssetUrl(assetBaseUrl, 'ui/no-ball.png');
+  const emptySrc = manifestUrl(assetBaseUrl, AssetIds.uiNoBall);
   const slot = `<span class="pot-slot pot-slot--icon" aria-hidden="true"><img class="pot-slot-img" src="${emptySrc}" alt="" decoding="async" /></span>`;
   return new Array(7).fill(slot).join('');
 }
 
 /** Cue shop showcase art (full card PNGs); other catalog ids use procedural preview. */
 function shopCueShowcaseImageUrl(assetBaseUrl: string, cueId: string): string | null {
-  const rel: Record<string, string> = {
-    classic: 'ui/cue_classic.png',
-    street: 'ui/cue_street_maple.png',
-    pro: 'ui/cue_pro_fiber.png',
-    neon: 'ui/cue_neon_glow.png',
+  const rel: Record<string, keyof typeof AssetManifest> = {
+    classic: AssetIds.uiCueClassicCard,
+    street: AssetIds.uiCueStreetCard,
+    pro: AssetIds.uiCueProCard,
+    neon: AssetIds.uiCueNeonCard,
   };
-  const path = rel[cueId];
-  return path ? resolveBrowserAssetUrl(assetBaseUrl, path) : null;
+  const key = rel[cueId];
+  return key ? manifestUrl(assetBaseUrl, key) : null;
 }
 
 function shopCueRarityClass(cueId: string): string {
@@ -3251,15 +3280,15 @@ function escapeHtml(s: string): string {
 
 /** Kart üstü "You" satırı — mod kazanım rozeti (`public/ui/Win_*.png`); casual = turnuva yok. */
 function endCardModeWinBadgeUrl(assetBaseUrl: string, tournamentDefId: string | undefined): string {
-  const fileByDef: Readonly<Record<string, string>> = {
-    rookie: 'ui/Win_RookieCup.png',
-    pro: 'ui/Win_ProSeries.png',
-    elite: 'ui/Win_EliteBrawl.png',
-    grandslam: 'ui/Win_GrandSlam.png',
+  const fileByDef: Readonly<Record<string, keyof typeof AssetManifest>> = {
+    rookie: AssetIds.uiWinRookieCup,
+    pro: AssetIds.uiWinProSeries,
+    elite: AssetIds.uiWinEliteBrawl,
+    grandslam: AssetIds.uiWinGrandSlam,
   };
-  const rel =
-    tournamentDefId && fileByDef[tournamentDefId] ? fileByDef[tournamentDefId]! : 'ui/Win_Casual.png';
-  return resolveBrowserAssetUrl(assetBaseUrl, rel);
+  const key =
+    tournamentDefId && fileByDef[tournamentDefId] ? fileByDef[tournamentDefId]! : AssetIds.uiWinCasual;
+  return manifestUrl(assetBaseUrl, key);
 }
 
 function tournamentSlotReactionUrl(assetBaseUrl: string, opponentId: string, kind: 'cry'): string {

@@ -21,6 +21,13 @@ export interface TransformState {
 
 export type WorldObjectLifetime = 'persistent' | 'pooled' | 'oneShot';
 export type WorldObjectReplication = 'sharedGameplay' | 'localCosmetic';
+export type FutureMhsNetworkMode = 'Networked' | 'LocalOnly';
+
+/** Future Meta Horizon mapping used by adapters and manifest/docs. */
+export const REPLICATION_TO_MHS_NETWORK_MODE: Record<WorldObjectReplication, FutureMhsNetworkMode> = {
+  sharedGameplay: 'Networked',
+  localCosmetic: 'LocalOnly',
+};
 
 export interface WorldObjectState {
   objectId: string;
@@ -74,11 +81,35 @@ export interface TableSpaceMeta {
   height: number;
 }
 
+/** Optional render-only table geometry projection so adapters avoid physics module imports. */
+export interface TablePocketData {
+  x: number;
+  y: number;
+  radius: number;
+}
+
+export interface TableCushionSegmentData {
+  ax: number;
+  ay: number;
+  bx: number;
+  by: number;
+  role?: string;
+}
+
+export interface TableGeometryData {
+  width: number;
+  height: number;
+  pockets: readonly TablePocketData[];
+  cushions: readonly TableCushionSegmentData[];
+}
+
 export interface RenderWorldState {
   camera: CameraState;
   objects: readonly WorldObjectState[];
   polylines: readonly PolylineObjectState[];
   tableSpace: TableSpaceMeta;
+  /** Optional render geometry projection; adapters can avoid importing physics/Table. */
+  tableGeometry?: TableGeometryData;
   ambientColorHex?: string;
   /** Reserved; 3D hand-on-cue hint disabled (power uses HUD slider; first-break pulse is `HudState.eightBall.powerBarHint`). */
   cuePullHandHint?: boolean;
@@ -254,4 +285,6 @@ export interface HudState {
   }[];
   /** Oyuncu beyazı sürükleyerek yerleştirirken cursor/ikon ipucu. */
   cueBallInHandCursorHint?: boolean;
+  /** `true` after at least one drag so HUD can show explicit confirm CTA. */
+  cueBallInHandCanConfirm?: boolean;
 }

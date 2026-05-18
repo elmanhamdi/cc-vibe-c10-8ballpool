@@ -24,7 +24,15 @@ const tableLayout = resolveTableLayoutFromBrowser({ storage });
 const sharedTable = new Table(tableLayout);
 const engine = new GameEngine({ table: sharedTable, ballRadius: 8.1, storage });
 const assetBaseUrl = import.meta.env.BASE_URL;
-const sceneAdapter = new ThreeSceneAdapter(canvas, { assetBaseUrl, physicsTable: sharedTable });
+const sceneAdapter = new ThreeSceneAdapter(canvas, {
+  assetBaseUrl,
+  tableGeometry: {
+    width: sharedTable.width,
+    height: sharedTable.height,
+    pockets: sharedTable.pockets.map((p) => ({ x: p.pos.x, y: p.pos.y, radius: p.radius })),
+    cushions: sharedTable.cushions.map((s) => ({ ax: s.ax, ay: s.ay, bx: s.bx, by: s.by, role: s.role })),
+  },
+});
 const audioAdapter = new BrowserAudioAdapter({ assetBaseUrl });
 const physicsDebug = new PhysicsDebugToggle();
 const cameraDebug = new CameraDebugToggle(gameRoot);
@@ -84,7 +92,7 @@ const hudAdapter = new BrowserHudAdapter(
     toggleSound: () => audioAdapter.toggleMute(),
     isSoundMuted: () => audioAdapter.isMuted(),
     playUiClick: () => {
-      audioAdapter.playSoundEffect(AssetIds.soundUiClick, 0.55);
+      engine.queuePlatformSound(AssetIds.soundUiClick, 0.55);
     },
     storage,
   },
@@ -207,6 +215,17 @@ const loop = (now: number) => {
   requestAnimationFrame(loop);
 };
 
-void sceneAdapter.preload([]).then(() => {
+void sceneAdapter
+  .preload([
+    AssetIds.cueMesh,
+    AssetIds.tableMesh,
+    AssetIds.tableFloorTex,
+    AssetIds.aimIntroFinger,
+    AssetIds.ballInHandFinger,
+    AssetIds.opponentTungoIdleModel,
+    AssetIds.opponentGattottoIdleModel,
+    AssetIds.opponentTortaIdleModel,
+  ])
+  .then(() => {
   requestAnimationFrame(loop);
 });

@@ -2,7 +2,7 @@ import type { AssetManifestEntry } from './AssetTypes.js';
 
 export type { AssetKind, AssetManifestEntry } from './AssetTypes.js';
 
-const tableGlb = new URL('../../assets/meshes/Table.glb', import.meta.url).href;
+const tableGlb = 'assets/meshes/Table.glb';
 
 function ballDiffuseEntry(n: number): AssetManifestEntry {
   return {
@@ -22,6 +22,48 @@ const ballDiffuseEntries = Object.fromEntries(
   }),
 ) as Record<string, AssetManifestEntry>;
 
+function ballTemplateEntry(id: string): AssetManifestEntry {
+  return {
+    id,
+    kind: 'template',
+    browserUrl: `template://${id}`,
+    futureMhsPath: `@Templates/${id}.hstf`,
+    notes:
+      'Contract: children=[visual.mesh.ball]; components=[Transform, MeshRenderer, BallGameplayMarker]; network=Networked; loading=renderer-factory.',
+  };
+}
+
+const ballTemplateEntries = Object.fromEntries(
+  [
+    ['ball.cue', ballTemplateEntry('ball.cue')],
+    ['ball.eight', ballTemplateEntry('ball.eight')],
+    ...Array.from({ length: 7 }, (_, i) => {
+      const n = i + 1;
+      return [`ball.solid.${n}`, ballTemplateEntry(`ball.solid.${n}`)] as const;
+    }),
+    ...Array.from({ length: 7 }, (_, i) => {
+      const n = i + 9;
+      return [`ball.stripe.${n}`, ballTemplateEntry(`ball.stripe.${n}`)] as const;
+    }),
+  ] as const,
+) as Record<string, AssetManifestEntry>;
+
+const uiBallSpriteEntries = Object.fromEntries(
+  Array.from({ length: 15 }, (_, i) => {
+    const n = i + 1;
+    return [
+      `ui.ball.${n}`,
+      {
+        id: `ui.ball.${n}`,
+        kind: 'ui',
+        browserUrl: `ui/balls/${n}.png`,
+        futureMhsPath: `@UI/Balls/${n}.png`,
+        sourceFormat: 'png',
+      } satisfies AssetManifestEntry,
+    ] as const;
+  }),
+) as Record<string, AssetManifestEntry>;
+
 export const AssetManifest = {
   'env.tableMesh': {
     id: 'env.tableMesh',
@@ -36,6 +78,19 @@ export const AssetManifest = {
     collision: 'custom',
     notes: 'Imported table mesh; physics bounds authored in Table.ts',
   },
+  'env.ballMesh': {
+    id: 'env.ballMesh',
+    kind: 'model',
+    browserUrl: 'assets/meshes/Ball.glb',
+    futureMhsPath: '@Assets/Meshes/Ball',
+    sourceFormat: 'glb',
+    unitScale: 1,
+    forwardAxis: '+Z',
+    upAxis: '+Y',
+    pivot: 'center',
+    collision: 'none',
+    notes: 'Optional authored ball mesh; renderer falls back to procedural sphere if missing.',
+  },
 
   'env.cueMesh': {
     id: 'env.cueMesh',
@@ -49,6 +104,155 @@ export const AssetManifest = {
     pivot: 'custom',
     collision: 'none',
     notes: 'Pool cue mesh; UV albedo per shop cue in `textures/cues/*.png`.',
+  },
+  'env.floor.table': {
+    id: 'env.floor.table',
+    kind: 'texture',
+    browserUrl: 'textures/floor/floor.jpg',
+    futureMhsPath: '@Assets/Textures/FloorTable',
+    sourceFormat: 'jpg',
+  },
+  'env.wall.tungBrick': {
+    id: 'env.wall.tungBrick',
+    kind: 'texture',
+    browserUrl: 'textures/wall/cartoon-brick.png',
+    futureMhsPath: '@Assets/Textures/TungBrickWall',
+    sourceFormat: 'png',
+  },
+
+  'model.opponent.tungoIdle': {
+    id: 'model.opponent.tungoIdle',
+    kind: 'model',
+    browserUrl: 'opponents/tungo/model/Tungo_Idle.fbx',
+    futureMhsPath: '@Assets/Opponents/Tungo/Idle',
+    sourceFormat: 'fbx',
+    notes: 'Spawned for opponent placeholder in gameplay world.',
+  },
+  'model.opponent.gattottoIdle': {
+    id: 'model.opponent.gattottoIdle',
+    kind: 'model',
+    browserUrl: 'opponents/gattotto_otto/model/Idle.fbx',
+    futureMhsPath: '@Assets/Opponents/GattottoOtto/Idle',
+    sourceFormat: 'fbx',
+  },
+  'model.opponent.tortaIdle': {
+    id: 'model.opponent.tortaIdle',
+    kind: 'model',
+    browserUrl: 'opponents/torta_tartaruga/model/Torta_Idle.fbx',
+    futureMhsPath: '@Assets/Opponents/TortaTartaruga/Idle',
+    sourceFormat: 'fbx',
+  },
+  'tex.opponent.idle.sidecar.diffuse': {
+    id: 'tex.opponent.idle.sidecar.diffuse',
+    kind: 'texture',
+    browserUrl: 'Image_0.jpg',
+    futureMhsPath: '@Assets/Opponents/Common/IdleSidecar_Diffuse',
+    sourceFormat: 'jpg',
+    notes: 'Mapped as albedo/diffuse when FBX embeds absolute texture disk paths.',
+  },
+  'tex.opponent.idle.sidecar.normal': {
+    id: 'tex.opponent.idle.sidecar.normal',
+    kind: 'texture',
+    browserUrl: 'Image_2.jpg',
+    futureMhsPath: '@Assets/Opponents/Common/IdleSidecar_Normal',
+    sourceFormat: 'jpg',
+    notes: 'Mapped to normal slot when sidecar textures are present.',
+  },
+  'tex.opponent.idle.sidecar.emissive': {
+    id: 'tex.opponent.idle.sidecar.emissive',
+    kind: 'texture',
+    browserUrl: 'Image_3.jpg',
+    futureMhsPath: '@Assets/Opponents/Common/IdleSidecar_Emissive',
+    sourceFormat: 'jpg',
+    notes: 'Mapped to emissive slot when sidecar textures are present.',
+  },
+
+  ...ballTemplateEntries,
+
+  'vfx.cueStick': {
+    id: 'vfx.cueStick',
+    kind: 'template',
+    browserUrl: 'template://vfx.cueStick',
+    futureMhsPath: '@Templates/cue_stick.hstf',
+    notes:
+      'Contract: children=[cue.root, cue.tip]; components=[Transform, MeshRenderer]; network=LocalOnly; loading=renderer-factory.',
+  },
+  'vfx.aimIntroFinger': {
+    id: 'vfx.aimIntroFinger',
+    kind: 'ui',
+    browserUrl: 'ui/hand-cursor-tap.png',
+    futureMhsPath: '@UI/hand-cursor-tap.png',
+    sourceFormat: 'png',
+  },
+  'vfx.ballInHandFinger': {
+    id: 'vfx.ballInHandFinger',
+    kind: 'ui',
+    browserUrl: 'ui/hand-cursor-tap.png',
+    futureMhsPath: '@UI/hand-cursor-tap.png',
+    sourceFormat: 'png',
+  },
+  'vfx.tutorialDragFinger': {
+    id: 'vfx.tutorialDragFinger',
+    kind: 'ui',
+    browserUrl: 'ui/hand-cursor-tap-flipped.png',
+    futureMhsPath: '@UI/hand-cursor-tap-flipped.png',
+    sourceFormat: 'png',
+  },
+  'line.aim': {
+    id: 'line.aim',
+    kind: 'template',
+    browserUrl: 'template://line.aim',
+    futureMhsPath: '@Templates/line_aim.hstf',
+    notes:
+      'Contract: children=[line.segment*]; components=[Transform, LineRenderer]; network=LocalOnly; loading=renderer-factory.',
+  },
+  'line.ghostObject': {
+    id: 'line.ghostObject',
+    kind: 'template',
+    browserUrl: 'template://line.ghostObject',
+    futureMhsPath: '@Templates/line_ghost_object.hstf',
+    notes:
+      'Contract: children=[line.segment*]; components=[Transform, LineRenderer]; network=LocalOnly; loading=renderer-factory.',
+  },
+  'line.ghostCue': {
+    id: 'line.ghostCue',
+    kind: 'template',
+    browserUrl: 'template://line.ghostCue',
+    futureMhsPath: '@Templates/line_ghost_cue.hstf',
+    notes:
+      'Contract: children=[line.segment*]; components=[Transform, LineRenderer]; network=LocalOnly; loading=renderer-factory.',
+  },
+  'line.debug': {
+    id: 'line.debug',
+    kind: 'template',
+    browserUrl: 'template://line.debug',
+    futureMhsPath: '@Templates/line_debug.hstf',
+    notes:
+      'Contract: children=[line.segment*]; components=[Transform, LineRenderer]; network=LocalOnly; loading=renderer-factory.',
+  },
+  'char.tungPlaceholder': {
+    id: 'char.tungPlaceholder',
+    kind: 'template',
+    browserUrl: 'template://char.tungPlaceholder',
+    futureMhsPath: '@Templates/opp_tungo_placeholder.hstf',
+    notes:
+      'Contract: children=[opponent.idle.rig, env.wall.backdrop?]; components=[Transform, SkinnedMeshRenderer, Animator?]; network=LocalOnly; sidecar=[tex.opponent.idle.sidecar.diffuse->albedo, tex.opponent.idle.sidecar.normal->normal, tex.opponent.idle.sidecar.emissive->emissive].',
+  },
+  'char.tortaPlaceholder': {
+    id: 'char.tortaPlaceholder',
+    kind: 'template',
+    browserUrl: 'template://char.tortaPlaceholder',
+    futureMhsPath: '@Templates/opp_torta_placeholder.hstf',
+    notes:
+      'Contract: children=[opponent.idle.rig, env.wall.backdrop?]; components=[Transform, SkinnedMeshRenderer, Animator?]; network=LocalOnly; sidecar=[tex.opponent.idle.sidecar.diffuse->albedo, tex.opponent.idle.sidecar.normal->normal, tex.opponent.idle.sidecar.emissive->emissive].',
+  },
+  'char.gattottoPlaceholder': {
+    id: 'char.gattottoPlaceholder',
+    kind: 'template',
+    browserUrl: 'template://char.gattottoPlaceholder',
+    futureMhsPath: '@Templates/opp_gattotto_placeholder.hstf',
+    notes:
+      'Contract: children=[opponent.idle.rig, env.wall.backdrop?]; components=[Transform, SkinnedMeshRenderer, Animator?]; network=LocalOnly; sidecar=[tex.opponent.idle.sidecar.diffuse->albedo, tex.opponent.idle.sidecar.normal->normal, tex.opponent.idle.sidecar.emissive->emissive].',
   },
 
   'tex.cue.classic': {
@@ -397,6 +601,267 @@ export const AssetManifest = {
     futureMhsPath: '@UI/cup_grand_slam.png',
     sourceFormat: 'png',
     notes: 'Tournament mode-select trophy (Grand Slam / Masters).',
+  },
+
+  'ui.sound.on': {
+    id: 'ui.sound.on',
+    kind: 'ui',
+    browserUrl: 'ui/sound.png',
+    futureMhsPath: '@UI/sound.png',
+    sourceFormat: 'png',
+  },
+  'ui.sound.off': {
+    id: 'ui.sound.off',
+    kind: 'ui',
+    browserUrl: 'ui/sound_off.png',
+    futureMhsPath: '@UI/sound_off.png',
+    sourceFormat: 'png',
+  },
+  'ui.vs.flare': {
+    id: 'ui.vs.flare',
+    kind: 'ui',
+    browserUrl: 'ui/vs.png',
+    futureMhsPath: '@UI/vs.png',
+    sourceFormat: 'png',
+  },
+  'ui.money': {
+    id: 'ui.money',
+    kind: 'ui',
+    browserUrl: 'ui/money.png',
+    futureMhsPath: '@UI/money.png',
+    sourceFormat: 'png',
+  },
+  'ui.ribbon.championMatch': {
+    id: 'ui.ribbon.championMatch',
+    kind: 'ui',
+    browserUrl: 'ui/champion_match.png',
+    futureMhsPath: '@UI/champion_match.png',
+    sourceFormat: 'png',
+  },
+  'ui.ribbon.championTournament': {
+    id: 'ui.ribbon.championTournament',
+    kind: 'ui',
+    browserUrl: 'ui/champion_tournament.png',
+    futureMhsPath: '@UI/champion_tournament.png',
+    sourceFormat: 'png',
+  },
+  'ui.button.playCta': {
+    id: 'ui.button.playCta',
+    kind: 'ui',
+    browserUrl: 'ui/Button_Play_new.png',
+    futureMhsPath: '@UI/Button_Play_new.png',
+    sourceFormat: 'png',
+  },
+  'ui.button.playAgain': {
+    id: 'ui.button.playAgain',
+    kind: 'ui',
+    browserUrl: 'ui/play_again.png',
+    futureMhsPath: '@UI/play_again.png',
+    sourceFormat: 'png',
+  },
+  'ui.button.nextGame': {
+    id: 'ui.button.nextGame',
+    kind: 'ui',
+    browserUrl: 'ui/next-game.png',
+    futureMhsPath: '@UI/next-game.png',
+    sourceFormat: 'png',
+  },
+  'ui.button.shop': {
+    id: 'ui.button.shop',
+    kind: 'ui',
+    browserUrl: 'ui/button_shop.png',
+    futureMhsPath: '@UI/button_shop.png',
+    sourceFormat: 'png',
+  },
+  'ui.button.mainMenu': {
+    id: 'ui.button.mainMenu',
+    kind: 'ui',
+    browserUrl: 'ui/button_mainmenu.png',
+    futureMhsPath: '@UI/button_mainmenu.png',
+    sourceFormat: 'png',
+  },
+  'ui.result.youWon': {
+    id: 'ui.result.youWon',
+    kind: 'ui',
+    browserUrl: 'ui/youwon.png',
+    futureMhsPath: '@UI/youwon.png',
+    sourceFormat: 'png',
+  },
+  'ui.result.youLose': {
+    id: 'ui.result.youLose',
+    kind: 'ui',
+    browserUrl: 'ui/youlose.png',
+    futureMhsPath: '@UI/youlose.png',
+    sourceFormat: 'png',
+  },
+  'ui.shop.banner': {
+    id: 'ui.shop.banner',
+    kind: 'ui',
+    browserUrl: 'ui/shop_brainrot.png',
+    futureMhsPath: '@UI/shop_brainrot.png',
+    sourceFormat: 'png',
+  },
+  'ui.button.start': {
+    id: 'ui.button.start',
+    kind: 'ui',
+    browserUrl: 'ui/button-start.png',
+    futureMhsPath: '@UI/button-start.png',
+    sourceFormat: 'png',
+  },
+  'ui.power.trackMuted': {
+    id: 'ui.power.trackMuted',
+    kind: 'ui',
+    browserUrl: 'ui/power-meter/track-muted.png',
+    futureMhsPath: '@UI/power-meter/track-muted.png',
+    sourceFormat: 'png',
+  },
+  'ui.power.trackSpectrum': {
+    id: 'ui.power.trackSpectrum',
+    kind: 'ui',
+    browserUrl: 'ui/power-meter/track-spectrum.png',
+    futureMhsPath: '@UI/power-meter/track-spectrum.png',
+    sourceFormat: 'png',
+  },
+  'ui.button.playLegacy': {
+    id: 'ui.button.playLegacy',
+    kind: 'ui',
+    browserUrl: 'ui/button_play.png',
+    futureMhsPath: '@UI/button_play.png',
+    sourceFormat: 'png',
+  },
+  'ui.menu.bg': {
+    id: 'ui.menu.bg',
+    kind: 'ui',
+    browserUrl: 'ui/bg.jpg',
+    futureMhsPath: '@UI/bg.jpg',
+    sourceFormat: 'jpg',
+  },
+  'ui.menu.logo': {
+    id: 'ui.menu.logo',
+    kind: 'ui',
+    browserUrl: 'ui/8ballslogo.png',
+    futureMhsPath: '@UI/8ballslogo.png',
+    sourceFormat: 'png',
+  },
+  'ui.button.leaderboards': {
+    id: 'ui.button.leaderboards',
+    kind: 'ui',
+    browserUrl: 'ui/button_leaderboards.png',
+    futureMhsPath: '@UI/button_leaderboards.png',
+    sourceFormat: 'png',
+  },
+  'ui.button.achievements': {
+    id: 'ui.button.achievements',
+    kind: 'ui',
+    browserUrl: 'ui/button_achivement.png',
+    futureMhsPath: '@UI/button_achivement.png',
+    sourceFormat: 'png',
+  },
+  'ui.button.playMain': {
+    id: 'ui.button.playMain',
+    kind: 'ui',
+    browserUrl: 'ui/Button_Play_new.png',
+    futureMhsPath: '@UI/Button_Play_new.png',
+    sourceFormat: 'png',
+  },
+  'ui.button.tournamentsMain': {
+    id: 'ui.button.tournamentsMain',
+    kind: 'ui',
+    browserUrl: 'ui/Button_Tournaments_new.png',
+    futureMhsPath: '@UI/Button_Tournaments_new.png',
+    sourceFormat: 'png',
+  },
+  'ui.button.shopMain': {
+    id: 'ui.button.shopMain',
+    kind: 'ui',
+    browserUrl: 'ui/Button_Shop_new.png',
+    futureMhsPath: '@UI/Button_Shop_new.png',
+    sourceFormat: 'png',
+  },
+  'ui.tournament.upNext': {
+    id: 'ui.tournament.upNext',
+    kind: 'ui',
+    browserUrl: 'ui/up-next.png',
+    futureMhsPath: '@UI/up-next.png',
+    sourceFormat: 'png',
+  },
+  'ui.tournament.locked': {
+    id: 'ui.tournament.locked',
+    kind: 'ui',
+    browserUrl: 'ui/locked.png',
+    futureMhsPath: '@UI/locked.png',
+    sourceFormat: 'png',
+  },
+  'ui.ball.empty': {
+    id: 'ui.ball.empty',
+    kind: 'ui',
+    browserUrl: 'ui/no-ball.png',
+    futureMhsPath: '@UI/no-ball.png',
+    sourceFormat: 'png',
+  },
+  ...uiBallSpriteEntries,
+  'ui.cue.classicCard': {
+    id: 'ui.cue.classicCard',
+    kind: 'ui',
+    browserUrl: 'ui/cue_classic.png',
+    futureMhsPath: '@UI/cue_classic.png',
+    sourceFormat: 'png',
+  },
+  'ui.cue.streetCard': {
+    id: 'ui.cue.streetCard',
+    kind: 'ui',
+    browserUrl: 'ui/cue_street_maple.png',
+    futureMhsPath: '@UI/cue_street_maple.png',
+    sourceFormat: 'png',
+  },
+  'ui.cue.proCard': {
+    id: 'ui.cue.proCard',
+    kind: 'ui',
+    browserUrl: 'ui/cue_pro_fiber.png',
+    futureMhsPath: '@UI/cue_pro_fiber.png',
+    sourceFormat: 'png',
+  },
+  'ui.cue.neonCard': {
+    id: 'ui.cue.neonCard',
+    kind: 'ui',
+    browserUrl: 'ui/cue_neon_glow.png',
+    futureMhsPath: '@UI/cue_neon_glow.png',
+    sourceFormat: 'png',
+  },
+  'ui.win.rookieCup': {
+    id: 'ui.win.rookieCup',
+    kind: 'ui',
+    browserUrl: 'ui/Win_RookieCup.png',
+    futureMhsPath: '@UI/Win_RookieCup.png',
+    sourceFormat: 'png',
+  },
+  'ui.win.proSeries': {
+    id: 'ui.win.proSeries',
+    kind: 'ui',
+    browserUrl: 'ui/Win_ProSeries.png',
+    futureMhsPath: '@UI/Win_ProSeries.png',
+    sourceFormat: 'png',
+  },
+  'ui.win.eliteBrawl': {
+    id: 'ui.win.eliteBrawl',
+    kind: 'ui',
+    browserUrl: 'ui/Win_EliteBrawl.png',
+    futureMhsPath: '@UI/Win_EliteBrawl.png',
+    sourceFormat: 'png',
+  },
+  'ui.win.grandSlam': {
+    id: 'ui.win.grandSlam',
+    kind: 'ui',
+    browserUrl: 'ui/Win_GrandSlam.png',
+    futureMhsPath: '@UI/Win_GrandSlam.png',
+    sourceFormat: 'png',
+  },
+  'ui.win.casual': {
+    id: 'ui.win.casual',
+    kind: 'ui',
+    browserUrl: 'ui/Win_Casual.png',
+    futureMhsPath: '@UI/Win_Casual.png',
+    sourceFormat: 'png',
   },
 
   'sound.pool.cueStrike': {

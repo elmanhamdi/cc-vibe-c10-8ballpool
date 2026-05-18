@@ -1,5 +1,6 @@
 import type { GameEvent } from '../world/GameEvents.js';
 import type { HudState, RenderWorldState } from '../world/renderTypes.js';
+import type { GameSnapshot, GameState } from './types.js';
 
 /** Normalized input — no DOM fields (guide §8). */
 export type GameInputCommand =
@@ -22,6 +23,7 @@ export type GameInputCommand =
   | { type: 'aimIntro.dismiss' }
   /** Tutorial: dismiss “pocket the 8” overlay (`HudState.eightBall.eightBallIntro`). */
   | { type: 'tutorialEightIntro.dismiss' }
+  | { type: 'ballInHand.confirm' }
   | { type: 'spin.set'; nx: number; ny: number }
   | {
       type: 'pointer.table';
@@ -52,6 +54,10 @@ export interface RenderRuntimeHints {
 
 export interface Game {
   update(dtSec: number, commands: readonly GameInputCommand[]): void;
+  /** Authoritative game state boundary used to derive snapshots/hud/render state. */
+  getGameState(): GameState;
+  /** Authoritative runtime snapshot for portability/debug tooling. */
+  getSnapshot(): GameSnapshot;
   getRenderWorldState(viewport: ViewportSize, hints: RenderRuntimeHints): RenderWorldState;
   getHudState(): HudState;
   drainEvents(): GameEvent[];

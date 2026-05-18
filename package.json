@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
-    "build:docs": "tsc && vite build --outDir docs",
+    "validate:manifest": "node scripts/validate-asset-manifest.mjs",
+    "validate:manifest:strict": "node scripts/validate-asset-manifest.mjs --strict",
+    "build": "npm run validate:manifest && tsc && vite build",
+    "build:docs": "npm run validate:manifest && tsc && vite build --outDir docs",
     "preview": "vite preview",
     "export:power-meter": "node scripts/gen-power-meter-png.mjs"
   },

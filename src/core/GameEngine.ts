@@ -1,6 +1,6 @@
 import { Table } from '../physics/Table.js';
 import { CollisionSystem, type ShotOutcome } from '../physics/CollisionSystem.js';
-import type { PlayerId, GamePhase, GameSnapshot } from './types.js';
+import type { PlayerId, GamePhase, GameSnapshot, GameState } from './types.js';
 import { TurnManager } from '../gameplay/TurnManager.js';
 import {
   resolveEightBallRules,
@@ -183,6 +183,7 @@ export class GameEngine implements Game {
   /** Rakip faul etti; oyuncu beyazı sürükleyerek yerleştirecek (isteka gizli). */
   private awaitingBallInHandPlacement = false;
   private ballInHandDragging = false;
+  private ballInHandCanConfirm = false;
   /** AI beyazı taşırken görsel kaydırma (fizik `cue.pos` lerp). */
   private aiCueBallPlacementSlide: {
     fromX: number;
@@ -252,22 +253,27 @@ export class GameEngine implements Game {
 
   readonly poolInput = new PoolInputState();
   private readonly eventQueue: GameEvent[] = [];
+  private readonly delayedSounds: Array<{ remainingSec: number; soundId: string; volume?: number }> = [];
 
   private readTutorialCompleted(): boolean {
+    this.pushPersistence('load');
     const raw = this.storage.getItem(TUTORIAL_STORAGE_KEY);
     return raw === '1';
   }
 
   private writeTutorialCompleted(): void {
     this.storage.setItem(TUTORIAL_STORAGE_KEY, '1');
+    this.pushPersistence('save');
   }
 
   private readAimIntroDismissed(): boolean {
+    this.pushPersistence('load');
     return this.storage.getItem(AIM_INTRO_STORAGE_KEY) === '1';
   }
 
   private writeAimIntroDismissed(): void {
     this.storage.setItem(AIM_INTRO_STORAGE_KEY, '1');
+    this.pushPersistence('save');
   }
 
   /** True while full-screen aim / 8-ball tutorial UI blocks play, or tutorial “wait” after first pot before aim intro. */
@@ -467,6 +473,7 @@ export class GameEngine implements Game {
       this.turnClock.stop();
       /** Replace the match BGM queued by `beginCareer` with the menu (between-games) loop. */
       this.eventQueue.length = 0;
+      this.delayedSounds.length = 0;
       this.pushMusicStart(AssetIds.musicBgBetweenGames);
     }
   }
@@ -480,6 +487,7 @@ export class GameEngine implements Game {
   drainEvents(): GameEvent[] {
     const out = this.eventQueue.slice();
     this.eventQueue.length = 0;
+    this.delayedSounds.length = 0;
     return out;
   }
 
@@ -487,12 +495,38 @@ export class GameEngine implements Game {
     this.eventQueue.push({ type: 'sound', soundId, volume });
   }
 
+  private pushSoundDelayed(soundId: string, delaySec: number, volume?: number): void {
+    this.delayedSounds.push({ soundId, volume, remainingSec: Math.max(0, delaySec) });
+  }
+
+  /** Browser adapters can enqueue SFX through the same event drain pipeline. */
+  queuePlatformSound(soundId: string, volume?: number): void {
+    this.pushSound(soundId, volume);
+  }
+
+  private tickDelayedSounds(dt: number): void {
+    if (this.delayedSounds.length === 0) return;
+    for (let i = this.delayedSounds.length - 1; i >= 0; i--) {
+      const s = this.delayedSounds[i]!;
+      s.remainingSec -= dt;
+      if (s.remainingSec <= 0) {
+        this.pushSound(s.soundId, s.volume);
+        this.delayedSounds.splice(i, 1);
+      }
+    }
+  }
+
   private pushMusicStart(musicId: string): void {
     this.eventQueue.push({ type: 'music', musicId, action: 'start' });
   }
 
+  private pushPersistence(action: 'save' | 'load' | 'submitScore'): void {
+    this.eventQueue.push({ type: 'persistence', action });
+  }
+
   private loadProfileFromStorage(): PlayerProfile {
     try {
+      this.pushPersistence('load');
       const raw = this.storage.getItem(PROFILE_STORAGE_KEY);
       if (!raw) return defaultProfile();
       const parsed = JSON.parse(raw) as unknown;
@@ -505,6 +539,7 @@ export class GameEngine implements Game {
   private saveProfileToStorage(): void {
     try {
       this.storage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(this.profile));
+      this.pushPersistence('save');
     } catch {
       /* ignore */
     }
@@ -572,6 +607,7 @@ export class GameEngine implements Game {
     this.aiCueBallPlacementSlide = null;
     this.dialogue.clearBubble();
     this.eventQueue.length = 0;
+    this.delayedSounds.length = 0;
     this.tournament = null;
     this.casualOpponentId = null;
     this.tutorialAimIntroDismissedThisMatch = false;
@@ -802,6 +838,7 @@ export class GameEngine implements Game {
     this.awaitingFirstAiShot = true;
     this.awaitingBallInHandPlacement = false;
     this.ballInHandDragging = false;
+    this.ballInHandCanConfirm = false;
     this.aiCueBallPlacementSlide = null;
     this.activeShotIsOpeningBreak = false;
     this.openingShotCameraReturnActive = false;
@@ -855,6 +892,7 @@ export class GameEngine implements Game {
     this.awaitingFirstAiShot = true;
     this.awaitingBallInHandPlacement = false;
     this.ballInHandDragging = false;
+    this.ballInHandCanConfirm = false;
     this.aiCueBallPlacementSlide = null;
     this.activeShotIsOpeningBreak = false;
     this.openingShotCameraReturnActive = false;
@@ -1023,6 +1061,7 @@ export class GameEngine implements Game {
 
   update(dt: number, commands: readonly GameInputCommand[] = []): void {
     this.applyMenuCommands(commands);
+    this.tickDelayedSounds(dt);
 
     if (this.tutorialActive && this.tutorialAimIntroFirstPotHoldSec > 0) {
       const prev = this.tutorialAimIntroFirstPotHoldSec;
@@ -1273,7 +1312,7 @@ export class GameEngine implements Game {
       this.pushSound(AssetIds.soundBallsSettle, 0.22);
       if (shot.potted.length > 0) {
         this.pushSound(AssetIds.soundPocket, 0.42);
-        setTimeout(() => this.pushSound(AssetIds.soundPocket, 0.22), 320);
+        this.pushSoundDelayed(AssetIds.soundPocket, 0.32, 0.22);
       }
     }
     if (
@@ -1331,6 +1370,7 @@ export class GameEngine implements Game {
       this.openingShotCameraReturnActive = false;
       this.awaitingBallInHandPlacement = false;
       this.ballInHandDragging = false;
+      this.ballInHandCanConfirm = false;
       this.aiCueBallPlacementSlide = null;
       this.applyMatchResult(res);
       if (res.playerWon) this.pushSound(AssetIds.soundApplause, 0.6);
@@ -1352,6 +1392,7 @@ export class GameEngine implements Game {
     const foulBallInHand =
       res.foul !== 'none' && !res.playerWon && !res.playerLost;
     this.ballInHandDragging = false;
+    this.ballInHandCanConfirm = false;
 
     if (this.activePlayer === 'player') {
       this.phase = 'PlayerTurn';
@@ -1360,10 +1401,12 @@ export class GameEngine implements Game {
       this.aiCameraBlendTarget = 0;
       this.resetPlayerSpin();
       this.awaitingBallInHandPlacement = foulBallInHand;
+      this.ballInHandCanConfirm = false;
     } else {
       this.phase = 'AITurn';
       this.turnClock.stop();
       this.awaitingBallInHandPlacement = false;
+      this.ballInHandCanConfirm = false;
       if (foulBallInHand) {
         const fromX = this.physics.cue.pos.x;
         const fromY = this.physics.cue.pos.y;
@@ -1717,15 +1760,45 @@ export class GameEngine implements Game {
     this.pushSound(pick, 0.88);
   }
 
-  getSnapshot(): GameSnapshot {
+  getGameState(): GameState {
     return {
       phase: this.phase,
       levelIndex: this.levelIndex,
       activePlayer: this.activePlayer,
+      spin: { x: this.spinX, y: this.spinY },
+      rules: {
+        openTable: this.rulesCtx.openTable,
+        playerGroup: this.rulesCtx.playerGroup,
+        aiGroup: this.rulesCtx.aiGroup,
+      },
+      tutorial: {
+        active: this.tutorialActive,
+        aimIntroActive: this.aimIntroActive,
+        eightBallIntroActive: this.tutorialEightBallIntroActive,
+        awaitingBallInHandPlacement: this.awaitingBallInHandPlacement,
+      },
+      tournament: this.tournament
+        ? {
+            active: this.tournament.status === 'active',
+            currentRound: this.tournament.currentRound,
+            size: this.tournament.opponents.length,
+            status: this.tournament.status,
+            defId: this.tournament.defId,
+          }
+        : null,
+    };
+  }
+
+  getSnapshot(): GameSnapshot {
+    const gs = this.getGameState();
+    return {
+      phase: gs.phase,
+      levelIndex: gs.levelIndex,
+      activePlayer: gs.activePlayer,
       turnTime01:
-        this.phase === 'PlayerTurn'
+        gs.phase === 'PlayerTurn'
           ? this.turnClock.progress01()
-          : this.phase === 'AITurn'
+          : gs.phase === 'AITurn'
             ? Math.max(0, Math.min(1, this.aiThink / this.aiThinkTotal))
             : 1,
       dialogue: (() => {
@@ -1997,6 +2070,11 @@ export class GameEngine implements Game {
       },
       cueBallInHandCursorHint:
         this.awaitingBallInHandPlacement && this.phase === 'PlayerTurn' && this.physics.cue.active,
+      cueBallInHandCanConfirm:
+        this.awaitingBallInHandPlacement &&
+        this.phase === 'PlayerTurn' &&
+        this.physics.cue.active &&
+        this.ballInHandCanConfirm,
     };
   }
 
@@ -2361,6 +2439,12 @@ export class GameEngine implements Game {
       objects,
       polylines,
       tableSpace: { width: tw, height: th },
+      tableGeometry: {
+        width: tw,
+        height: th,
+        pockets: t.pockets.map((p) => ({ x: p.pos.x, y: p.pos.y, radius: p.radius })),
+        cushions: t.cushions.map((s) => ({ ax: s.ax, ay: s.ay, bx: s.bx, by: s.by, role: s.role })),
+      },
       ambientColorHex: '#0b0f14',
       cuePullHandHint,
       cueBallInHandCursorHint,
@@ -2385,6 +2469,14 @@ export class GameEngine implements Game {
     const out: GameInputCommand[] = [];
     const pickupR = this.physics.cue.radius * 2.85;
     for (const c of commands) {
+      if (c.type === 'ballInHand.confirm') {
+        if (this.ballInHandCanConfirm) {
+          this.awaitingBallInHandPlacement = false;
+          this.ballInHandDragging = false;
+          this.refreshAimIntroEligibility();
+        }
+        continue;
+      }
       if (c.type !== 'pointer.table') {
         out.push(c);
         continue;
@@ -2395,23 +2487,19 @@ export class GameEngine implements Game {
         const dy = tableY - this.physics.cue.pos.y;
         if (dx * dx + dy * dy <= pickupR * pickupR) {
           this.ballInHandDragging = true;
-        } else {
-          /** Boş alana tık: beyazı taşımadan onay (ör. mutfak konumu uygunsa). */
-          this.awaitingBallInHandPlacement = false;
-          this.refreshAimIntroEligibility();
         }
         continue;
       }
       if (phase === 'move' && this.ballInHandDragging) {
         this.physics.moveCueBallForBallInHand(tableX, tableY);
+        this.ballInHandCanConfirm = true;
         continue;
       }
       if (phase === 'up') {
         if (this.ballInHandDragging) {
           this.physics.moveCueBallForBallInHand(tableX, tableY);
           this.ballInHandDragging = false;
-          this.awaitingBallInHandPlacement = false;
-          this.refreshAimIntroEligibility();
+          this.ballInHandCanConfirm = true;
         }
         continue;
       }
@@ -2484,6 +2572,7 @@ export class GameEngine implements Game {
         this.tutorialEightBallIntroActive = false;
         this.turnClock.stop();
         this.eventQueue.length = 0;
+        this.delayedSounds.length = 0;
         this.pushMusicStart(AssetIds.musicBgBetweenGames);
       } else if (c.type === 'shop.buyCue') {
         this.buyCue(c.cueId);
@@ -2612,7 +2701,7 @@ function segmentToPolyline(
     colorHex: hex,
     opacity,
     visible: true,
-    lifetime: 'oneShot',
+    lifetime: 'pooled',
     replication: 'localCosmetic',
   };
 }
@@ -2645,7 +2734,7 @@ function contactRingPolyline(
     colorHex,
     opacity,
     visible: true,
-    lifetime: 'oneShot',
+    lifetime: 'pooled',
     replication: 'localCosmetic',
     lineWidth: 2.1,
   };
@@ -2668,12 +2757,12 @@ function buildPhysicsDebugLines(
     for (let i = 0; i + 1 < points.length; i += 2) {
       out.push({
         objectId: `debug.phys.${id}.${idx++}`,
-        templateId: 'debug.line',
+        templateId: AssetIds.debugLine,
         points: [points[i]!, points[i + 1]!],
         colorHex: `#${color.toString(16).padStart(6, '0')}`,
         opacity: 1,
         visible: true,
-        lifetime: 'oneShot',
+        lifetime: 'pooled',
         replication: 'localCosmetic',
       });
     }

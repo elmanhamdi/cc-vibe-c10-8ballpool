@@ -3451,12 +3451,13 @@ body {
   flex-direction: column;
   align-items: center;
   gap: clamp(8px, 2.4cqw, 14px);
-  margin-top: clamp(-56px, -14cqw, -28px);
+  margin-top: clamp(-68px, -17cqw, -36px);
+  transform: translate(20px, -50px);
 }
 
 .menu-hero-logo {
-  width: clamp(220px, 78cqw, 360px);
-  height: clamp(220px, 78cqw, 360px);
+  width: clamp(310px, 109.6875cqw, 507px);
+  height: clamp(310px, 109.6875cqw, 507px);
   background-image: var(--menu-hero-logo-image, none);
   background-size: contain;
   background-repeat: no-repeat;
